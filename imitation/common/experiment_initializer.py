@@ -41,12 +41,12 @@ class ExperimentInitializer:
             log_path = self.get_log_path()
             formats_strs = ['stdout', 'log', 'csv']
             fmtstr = "configuring logger"
-            if self.comm.Get_rank() == 0:
+            if self.comm is not None and self.comm.Get_rank() == 0:
                 fmtstr += " [master]"
             logger.info(fmtstr)
             logger.configure(dir_=log_path, format_strs=formats_strs)
             fmtstr = "logger configured"
-            if self.comm.Get_rank() == 0:
+            if self.comm is not None and self.comm.Get_rank() == 0:
                 fmtstr += " [master]"
             logger.info(fmtstr)
             logger.info("  directory: {}".format(log_path))
