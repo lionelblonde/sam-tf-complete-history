@@ -1,6 +1,5 @@
 import copy
 import os.path as osp
-from tqdm import trange
 
 import numpy as np
 
@@ -121,16 +120,16 @@ def evaluate(env, xpo_agent_wrapper, num_trajs, sample_or_mode, render,
     U.initialize()
     if exact_model_path is not None:
         U.load_model(exact_model_path)
-        logger.info("model loaded from exact path: {}".format(exact_model_path))
+        logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
         U.load_latest_checkpoint(model_ckpt_dir)
-        logger.info("model loaded from ckpt dir: {}".format(model_ckpt_dir))
-    logger.info('')
+        logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     ep_env_rets = []
     ep_lens = []
     # Collect trajectories
-    for _ in trange(num_trajs, desc='evaluating agent', unit='traj', ncols=80):
+    for i in range(num_trajs):
+        logger.info("evaluating [{}/{}]".format(i + 1, num_trajs))
         traj = traj_gen.__next__()
         ep_len, ep_env_ret = traj['ep_len'], traj['ep_env_ret']
         # Aggregate to the history data structures
@@ -138,7 +137,7 @@ def evaluate(env, xpo_agent_wrapper, num_trajs, sample_or_mode, render,
         ep_env_rets.append(ep_env_ret)
     # Log some statistics of the collected trajectories
     sample_or_mode = 'sample' if sample_or_mode else 'mode'
-    logger.info("how are actions picked? {}".format(sample_or_mode))
+    logger.info("action picking: {}".format(sample_or_mode))
     ep_len_mean = np.mean(ep_lens)
     ep_env_ret_mean = np.mean(ep_env_rets)
     logger.record_tabular("ep_len_mean", ep_len_mean)
@@ -160,11 +159,10 @@ def gather_trajectories(env, xpo_agent_wrapper, demos_dir, num_trajs, sample_or_
     U.initialize()
     if exact_model_path is not None:
         U.load_model(exact_model_path)
-        logger.info("model loaded from exact path: {}".format(exact_model_path))
+        logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
         U.load_latest_checkpoint(model_ckpt_dir)
-        logger.info("model loaded from ckpt dir: {}".format(model_ckpt_dir))
-    logger.info('')
+        logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     obs0 = []
     acs = []
@@ -174,7 +172,8 @@ def gather_trajectories(env, xpo_agent_wrapper, demos_dir, num_trajs, sample_or_
     ep_env_rets = []
     ep_lens = []
     # Collect trajectories
-    for _ in trange(num_trajs, desc='evaluating agent', unit='traj', ncols=80):
+    for i in range(num_trajs):
+        logger.info("gathering [{}/{}]".format(i + 1, num_trajs))
         traj = traj_gen.__next__()
         # Next two steps are separated to shrink line length
         ep_obs0, ep_acs, ep_env_rews = traj['obs0'], traj['acs'], traj['env_rews']
@@ -190,7 +189,7 @@ def gather_trajectories(env, xpo_agent_wrapper, demos_dir, num_trajs, sample_or_
         ep_env_rets.append(ep_env_ret)
     # Log some statistics of the collected trajectories
     sample_or_mode = 'sample' if sample_or_mode else 'mode'
-    logger.info("how are actions picked? {}".format(sample_or_mode))
+    logger.info("action picking: {}".format(sample_or_mode))
     ep_len_mean = np.mean(ep_lens)
     ep_len_std = np.std(ep_lens)
     ep_env_ret_mean = np.mean(ep_env_rets)
@@ -215,4 +214,5 @@ def gather_trajectories(env, xpo_agent_wrapper, demos_dir, num_trajs, sample_or_
              obs1=np.array(obs1),
              ep_lens=np.array(ep_lens),
              ep_env_rets=np.array(ep_env_rets))
-    logger.info("trajectories successfully saved @ {}.npz".format(path))
+    logger.info("saving demonstrations")
+    logger.info("  @: {}.npz".format(path))

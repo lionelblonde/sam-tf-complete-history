@@ -9,7 +9,7 @@ from imitation.common.sonnet_util import ActorNN, CriticNN
 from imitation.common import logger
 from imitation.common.mpi_moments import mpi_mean_like
 from imitation.common.mpi_running_mean_std import RunningMeanStd
-from imitation.common.misc_util import flatten_lists, fl32, zipsame
+from imitation.common.misc_util import onehotify, flatten_lists, fl32, zipsame
 from imitation.common.mpi_adam import MpiAdam
 from imitation.imitation_algorithms import memory as XP
 
@@ -69,10 +69,14 @@ class SAMAgent(my.AbstractModule):
         self.env = env
         self.ob_shape = self.env.observation_space.shape
         self.ac_space = self.env.action_space
-        self.ac_shape = self.ac_space.shape
-        if "NoFrameskip" in self.env.spec.id:
-            # Expand the dimension for Atari
-            self.ac_shape = (1,) + self.ac_shape
+
+        if isinstance(self.ac_space, spaces.Box):
+            self.ac_shape = self.ac_space.shape
+        elif isinstance(self.ac_space, spaces.Discrete):
+            self.ac_shape = (self.ac_space.n,)
+        else:
+            raise RuntimeError("ac space is neither Box nor Discrete")
+
         self.hps = hps
         assert self.hps.n > 1 or not self.hps.n_step_returns
 
@@ -128,13 +132,13 @@ class SAMAgent(my.AbstractModule):
                                       ac_space=self.ac_space, hps=self.hps)
 
         # Retrieve the synthetic reward network
-        self.reward = d.reward_nn
+        self.reward = d.reward_nn  # can be used to implement another priority update heuristic
 
         # Rescale observations
         if self.hps.from_raw_pixels:
             # Scale pixel values
-            self.obz0 = self.obs0 / 255.0
-            self.obz1 = self.obs1 / 255.0
+            self.obz0 = tf.cast(self.obs0, tf.float32) / 255.0
+            self.obz1 = tf.cast(self.obs1, tf.float32) / 255.0
         else:
             # Smooth out observations using running statistics and clip
             if self.hps.rmsify_obs:
@@ -175,30 +179,27 @@ class SAMAgent(my.AbstractModule):
         if self.hps.rmsify_rets:
             self.critic_pred_w_actor = self.dermsify(self.critic_pred_w_actor, self.ret_rms)
 
-        # Synthetic reward prediction from observation and state inputs
-        self.reward_pred = self.clip_rets(self.reward(self.obz0, self.acs))
-        if self.hps.rmsify_rets:
-            self.reward_pred = self.dermsify(self.reward_pred, self.ret_rms)
-        # Synthetic reward prediction from observation input and action outputed by the actor
-        # reward(s, actor(s)), i.e. only dependent on state input
-        self.reward_pred_w_actor = self.clip_rets(self.reward(self.obz0, self.actor_pred))
-        if self.hps.rmsify_rets:
-            self.reward_pred_w_actor = self.dermsify(self.reward_pred_w_actor, self.ret_rms)
-
         # Create target Q value defined as reward + gamma * Q' (1-step TD lookahead)
         # Q' (Q_{t+1}) is defined w/ s' (s_{t+1}) and a' (a_{t+1}),
         # where a' is the output of the target actor evaluated on s' (s_{t+1})
         self.q_prime = self.targ_critic(self.obz1, self.targ_actor(self.obz1))
         if self.hps.rmsify_rets:
             self.q_prime = self.dermsify(self.q_prime, self.ret_rms)
-        self.mask = np.ones_like(self.dones1) - self.dones1
+        self.mask = tf.ones_like(self.dones1) - self.dones1
         assert self.mask.get_shape().as_list() == self.q_prime.get_shape().as_list()
         self.masked_q_prime = self.mask * self.q_prime  # mask out Q's when terminal state reached
         self.targ_q = self.rews + (tf.pow(self.hps.gamma, self.td_len) * self.masked_q_prime)
 
         # Create Theano-like ops
-        self.act = U.function([self.obs0], [self.actor_pred])
-        self.act_q = U.function([self.obs0], [self.actor_pred, self.critic_pred_w_actor])
+        if isinstance(self.ac_space, spaces.Box):
+            self.act = U.function([self.obs0], [self.actor_pred])
+            self.act_q = U.function([self.obs0], [self.actor_pred, self.critic_pred_w_actor])
+        elif isinstance(self.ac_space, spaces.Discrete):
+            # Note: actor network outputs softmax -> take argmax to pick one action
+            self._actor_pred = tf.argmax(self.actor_pred, axis=-1)
+            self.act = U.function([self.obs0], [self._actor_pred])
+            self.act_q = U.function([self.obs0], [self._actor_pred, self.critic_pred_w_actor])
+
         if self.hps.rmsify_rets:
             self.old_ret_stats = U.function([self.rews], [self.ret_rms.mean, self.ret_rms.std])
         self.get_targ_q = U.function([self.obs1, self.rews, self.dones1, self.td_len], self.targ_q)
@@ -288,7 +289,14 @@ class SAMAgent(my.AbstractModule):
     def setup_replay_buffer(self):
         """Setup experiental memory unit"""
         logger.info("setting up replay buffer")
-        xp_params = dict(limit=self.hps.mem_size, ob_shape=self.ob_shape, ac_shape=self.ac_shape)
+        # In the discrete actions case, we store the acs indices
+        if isinstance(self.ac_space, spaces.Box):
+            _ac_shape = self.ac_shape
+        elif isinstance(self.ac_space, spaces.Discrete):
+            _ac_shape = ()
+        else:
+            raise RuntimeError("ac space is neither Box nor Discrete")
+        xp_params = dict(limit=self.hps.mem_size, ob_shape=self.ob_shape, ac_shape=_ac_shape)
         extra_xp_params = dict(alpha=self.hps.alpha, beta=self.hps.beta, ranked=self.hps.ranked)
         if self.hps.prioritized_replay:
             if self.hps.unreal:  # Unreal prioritized experience replay
@@ -338,6 +346,17 @@ class SAMAgent(my.AbstractModule):
         # Act (and compute Q) according to the parameter-noise-perturbed actor
         self.p_act = U.function([self.obs0], [self.pnp_actor_pred])
         self.p_act_q = U.function([self.obs0], [self.pnp_actor_pred, self.critic_pred_w_actor])
+
+        if isinstance(self.ac_space, spaces.Box):
+            self.p_act = U.function([self.obs0], [self.pnp_actor_pred])
+            self.p_act_q = U.function([self.obs0], [self.pnp_actor_pred, self.critic_pred_w_actor])
+        elif isinstance(self.ac_space, spaces.Discrete):
+            # Note: actor network outputs softmax -> take argmax to pick one action
+            self._pnp_actor_pred = tf.argmax(self.pnp_actor_pred, axis=-1)
+            self.p_act = U.function([self.obs0], [self._pnp_actor_pred])
+            self.p_act_q = U.function([self.obs0], [self._pnp_actor_pred,
+                                                    self.critic_pred_w_actor])
+
         # Compute distance between actor and adaptive-parameter-noise-perturbed actor predictions
         self.get_a_p_dist = U.function([self.obs0, self.pn_std], self.a_dist)
         # Retrieve parameter-noise-perturbation updates
@@ -352,23 +371,12 @@ class SAMAgent(my.AbstractModule):
         self.actor_losses_scaled = []
         phs = [self.obs0]
 
-        # Compute the loss corresponding to the negative of the cumulated synthetic reward,
-        # i.e. corresponding to the GAN generator loss
-        self.sr_loss = tf.reduce_mean(tf.log(1. - tf.sigmoid(self.reward_pred_w_actor) + 1e-8))
-        self.sr_loss_scaled = self.hps.sr_loss_scale * self.sr_loss
-        # Create the actor loss w/ the synthetic-reward loss
-        self.actor_loss = self.sr_loss_scaled
-        # Populate lists
-        self.actor_names.append('sr_loss')
-        self.actor_losses.append(self.sr_loss)
-        self.actor_losses_scaled.append(self.sr_loss_scaled)
-
         # Compute the Q loss as the negative of the cumulated Q values, as is
         # customary in actor critic architectures
         self.q_loss = -tf.reduce_mean(self.critic_pred_w_actor)
         self.q_loss_scaled = self.hps.q_loss_scale * self.q_loss
         # Add the Q loss to the actor loss
-        self.actor_loss += self.q_loss_scaled
+        self.actor_loss = self.q_loss_scaled
         # Populate lists
         self.actor_names.append('q_loss')
         self.actor_losses.append(self.q_loss)
@@ -563,6 +571,11 @@ class SAMAgent(my.AbstractModule):
         if self.hps.prioritized_replay:
             b_idxs = batch['idxs']
             b_iws = batch['iws']
+
+        if isinstance(self.ac_space, spaces.Discrete):
+            # Actions are stored as scalars in the replay buffer for storage reasons
+            # but the critic processes one-hot versions of those scalars
+            b_acs = onehotify(b_acs, self.ac_space.n)
 
         # Compute target Q values
         b_vs = [b_obs1, b_rews, b_dones1]

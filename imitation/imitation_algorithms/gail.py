@@ -1,7 +1,6 @@
 import time
 import copy
 import os.path as osp
-from tqdm import trange
 from collections import deque
 
 import tensorflow as tf
@@ -154,17 +153,17 @@ def evaluate(env, trpo_agent_wrapper, discriminator_wrapper, num_trajs, sample_o
     U.initialize()
     if exact_model_path is not None:
         U.load_model(exact_model_path)
-        logger.info("model loaded from exact path: {}".format(exact_model_path))
+        logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
         U.load_latest_checkpoint(model_ckpt_dir)
-        logger.info("model loaded from ckpt dir: {}".format(model_ckpt_dir))
-    logger.info('')
+        logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     ep_lens = []
     ep_syn_rets = []
     ep_env_rets = []
     # Collect trajectories
-    for _ in trange(num_trajs, desc='evaluating agent', unit='traj', ncols=80):
+    for i in range(num_trajs):
+        logger.info("evaluating [{}/{}]".format(i + 1, num_trajs))
         traj = traj_gen.__next__()
         ep_len, ep_syn_ret, ep_env_ret = traj['ep_len'], traj['ep_syn_ret'], traj['ep_env_ret']
         # Aggregate to the history data structures
@@ -173,7 +172,7 @@ def evaluate(env, trpo_agent_wrapper, discriminator_wrapper, num_trajs, sample_o
         ep_env_rets.append(ep_env_ret)
     # Log some statistics of the collected trajectories
     sample_or_mode = 'sample' if sample_or_mode else 'mode'
-    logger.info("how are actions picked? {}".format(sample_or_mode))
+    logger.info("action picking: {}".format(sample_or_mode))
     ep_len_mean = np.mean(ep_lens)
     ep_syn_ret_mean = np.mean(ep_syn_rets)
     ep_env_ret_mean = np.mean(ep_env_rets)

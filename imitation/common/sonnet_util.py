@@ -253,14 +253,8 @@ class ActorNN(snt.AbstractModule, AbstractNN):
             self.ac_dim = self.ac_space.n  # num ac choices
             embedding = snt.Linear(output_size=self.ac_dim, name='final',
                                    initializers=self.out_initializers)(embedding)
-            # Apply a softmax to scale between [0, 1] w/ sum equal to 1
+            # Apply softmax as output nonlinearity (prob of playing each discrete action)
             embedding = tf.nn.softmax(embedding, axis=-1)
-            # Output the index of the action associated with the highest value
-            embedding = tf.argmax(embedding, axis=-1)
-            # TODO comment
-            embedding = tf.cast(embedding, dtype=tf.float32)
-            # TODO comment
-            embedding = tf.expand_dims(embedding, axis=-1)
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
         return embedding

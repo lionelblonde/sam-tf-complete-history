@@ -1,7 +1,6 @@
 import time
 import copy
 import os.path as osp
-from tqdm import trange
 from collections import deque
 
 import numpy as np
@@ -59,11 +58,7 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, comm):
         qs[i] = q_pred
         dones[i] = done
         syn_rew = d.get_reward(ob, ac)
-        if "NoFrameskip" in env.spec.id:
-            _ac = np.asscalar(ac.astype(np.int64))
-            new_ob, env_rew, done, _ = env.step(_ac)
-        else:
-            new_ob, env_rew, done, _ = env.step(ac)
+        new_ob, env_rew, done, _ = env.step(ac)
         syn_rews[i] = syn_rew
         env_rews[i] = env_rew
         cur_ep_len += 1
@@ -106,11 +101,7 @@ def traj_ep_generator(env, mu, d, render):
         if render:
             env.render()
         syn_rew = d.get_reward(ob, ac)  # must be before the `step` in environment
-        if "NoFrameskip" in env.spec.id:
-            _ac = np.asscalar(ac.astype(np.int64))
-            new_ob, env_rew, done, _ = env.step(_ac)
-        else:
-            new_ob, env_rew, done, _ = env.step(ac)
+        new_ob, env_rew, done, _ = env.step(ac)
         syn_rews.append(syn_rew)
         env_rews.append(env_rew)
         cur_ep_len += 1
@@ -148,6 +139,7 @@ def evaluate(env,
              exact_model_path=None,
              model_ckpt_dir=None):
     """Evaluate a trained SAM agent"""
+
     # Only one of the two arguments can be provided
     assert sum([exact_model_path is None, model_ckpt_dir is None]) == 1
 
@@ -156,27 +148,24 @@ def evaluate(env,
     d = discriminator_wrapper('d')
     # Create a sam agent, taking `d` as input
     mu = sam_agent_wrapper('mu', d)
-
     # Create episode generator
     traj_gen = traj_ep_generator(env, mu, d, render)
-
     # Initialize and load the previously learned weights into the freshly re-built graph
     U.initialize()
     mu.initialize()
     if exact_model_path is not None:
         U.load_model(exact_model_path)
-        logger.info("model loaded from exact path: {}".format(exact_model_path))
+        logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
         U.load_latest_checkpoint(model_ckpt_dir)
-        logger.info("model loaded from ckpt dir: {}".format(model_ckpt_dir))
-    logger.info('')
-
+        logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     ep_lens = []
     ep_syn_rets = []
     ep_env_rets = []
     # Collect trajectories
-    for _ in trange(int(num_trajs), desc='evaluating agent', unit='traj', ncols=80):
+    for i in range(num_trajs):
+        logger.info("evaluating [{}/{}]".format(i + 1, num_trajs))
         traj = traj_gen.__next__()
         ep_len, ep_syn_ret, ep_env_ret = traj['ep_len'], traj['ep_syn_ret'], traj['ep_env_ret']
         # Aggregate to the history data structures
@@ -335,17 +324,17 @@ def learn(comm,
         syn_ret_buffer.extend(syn_rets)
         env_ret_buffer.extend(env_rets)
 
-        training_range = range(int(training_steps_per_iter))
-        if rank == 0:  # Only the rank zero worker displays a progress bar
-            desc = "{:<8} | iter #{}".format('train', iters_so_far)
-            training_range = trange(int(training_steps_per_iter),
-                                    desc=desc, unit='step', leave=True, ncols=80)
-        for training_step in training_range:
-            # Update discriminator w/ samples from replay buffer & expert dataset
-            for _ in range(d_steps):
+        for training_step in range(training_steps_per_iter):
+
+            logger.info("training [{}/{}]".format(training_step + 1, training_steps_per_iter))
+
+            for d_step in range(d_steps):
+                # Update discriminator w/ samples from replay buffer & expert dataset
+                logger.info("  updating d [{}/{}]".format(d_step + 1, d_steps))
                 # Collect generated data from experience buffer
                 xp_batch = mu.replay_buffer.sample(batch_size=batch_size)
                 ob_mu, ac_mu = xp_batch['obs0'], xp_batch['acs']
+
                 # Collect expert data w/ identical batch size (GAN's equal mixture)
                 ob_expert, ac_expert = expert_dataset.get_next_p_batch(batch_size=batch_size)
 
@@ -365,6 +354,7 @@ def learn(comm,
 
             if mu.param_noise is not None:
                 if training_step % param_noise_adaption_frequency == 0:
+                    logger.info("  adapting param noise")
                     # Adapt parameter noise
                     mu.adapt_param_noise(comm)
                     # Store the action-space distance between perturbed and non-perturbed actors
@@ -372,8 +362,9 @@ def learn(comm,
                     # Store the new std resulting from the adaption
                     pn_cur_std_buffer.append(mu.pn_cur_std)
 
-            # Update agent w/ samples from replay buffer
-            for _ in range(g_steps):
+            for g_step in range(g_steps):
+                # Update agent w/ samples from replay buffer
+                logger.info("  updating g [{}/{}]".format(g_step + 1, g_steps))
                 # Train the actor-critic architecture
                 actor_grads, actor_loss, critic_grads, critic_loss = mu.train()
                 # Store the losses and gradients in their respective deques
@@ -386,9 +377,8 @@ def learn(comm,
 
         if eval_env is not None:  # `eval_env` not None iff rank = 0
             assert rank == 0, "non-zero rank mpi worker forbidden here"
-            desc = "{:<8} | iter #{}".format('eval', iters_so_far)
-            for _ in trange(int(eval_steps_per_iter), desc=desc,
-                            unit='step', leave=True, ncols=80):
+            for eval_step in range(eval_steps_per_iter):
+                logger.info("evaluating [{}/{}]".format(eval_step + 1, eval_steps_per_iter))
                 # Sample an episode w/ non-perturbed actor w/o storing anything
                 eval_ep = eval_ep_gen.__next__()
                 # Unpack collected episodic data
@@ -430,7 +420,7 @@ def learn(comm,
 
         zipped_losses = zipsame(all_sub_l_names + all_agg_l_names + d.loss_names,
                                 all_sub_us_l + all_agg_l + list(d_avg_l),
-                                all_sub_s_l + ['N.A.'] * 2 + ['N.A.'] * 6)  # to maintain symmetry
+                                all_sub_s_l + ['N.A.'] * 2 + ['N.A.'] * 7)  # to maintain symmetry
         logger.info(columnize(names=['name', 'unscaled', 'scaled'],
                               tuples=zipped_losses,
                               widths=column_widths))

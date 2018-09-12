@@ -4,6 +4,19 @@ import gym
 import numpy as np
 
 
+def onehotify(targets, num_dims):
+    """Transforms an array of discrete actions
+    into an array containing their hot encodings
+    Example:
+        action `2` or `2.`, with a total of 4 possible actions -> [0., 0., 1., 0.] (1-dim array)
+    """
+    assert targets.ndim == 2, "minibatch dimension must be 2"
+    targets = targets.reshape(-1).astype(dtype=np.int64)
+    one_hot_targets = np.eye(num_dims)[targets]
+    assert (np.sum(one_hot_targets, axis=-1).reshape(-1) == 1.).all(), "encoding failed"
+    return one_hot_targets
+
+
 def fl32(x):
     """Cast any castable entity to type 'float32'
     `astype` is a numpy function
@@ -27,9 +40,8 @@ def zipsame(*seqs):
 def unpack(seq, sizes):
     """Unpack `seq` into a sequence of lists, with lengths specified by `sizes`.
     `None` in `sizes` means just one bare element, not a list.
-
     Example:
-    unpack([1, 2, 3, 4, 5, 6], [3, None, 2]) -> ([1, 2, 3], 4, [5, 6])
+        unpack([1, 2, 3, 4, 5, 6], [3, None, 2]) -> ([1, 2, 3], 4, [5, 6])
     Technically `upack` returns a generator object, i.e. an iterator over ([1, 2, 3], 4, [5, 6])
     """
     seq = list(seq)
@@ -91,16 +103,15 @@ def prettify_time(seconds):
 
 def boolean_flag(parser, name, default=False, help=None):
     """Add a boolean flag to argparse parser.
-
-    # Parameters:
+    Parameters
         - parser: argparse.Parser
-            parser to add the flag to
+          parser to add the flag to
         - name: str
-            --<name> will enable the flag, while --no-<name> will disable it
+          --<name> will enable the flag, while --no-<name> will disable it
         - default: bool or None
-            default value of the flag
+          default value of the flag
         - help: str
-            help string for the flag
+          help string for the flag
     """
     dest = name.replace('-', '_')
     parser.add_argument("--" + name, action="store_true", default=default, dest=dest, help=help)
@@ -108,18 +119,13 @@ def boolean_flag(parser, name, default=False, help=None):
 
 
 def get_wrapper_by_name(env, classname):
-    """Given an a gym environment possibly wrapped multiple times, returns a wrapper
-    of class named classname or raises ValueError if no such wrapper was applied
-
-    # Parameters:
+    """Given an a gym environment possibly wrapped multiple times, return a gym.Wrapper
+    of class named 'classname' or raises ValueError if no such wrapper was applied.
+    Parameters
         - env: gym.Env of gym.Wrapper
-            gym environment
+          gym environment
         - classname: str
-            name of the wrapper
-
-    # Returns:
-        - wrapper: gym.Wrapper
-            wrapper named classname
+          name of the wrapper
     """
     currentenv = env
     while True:

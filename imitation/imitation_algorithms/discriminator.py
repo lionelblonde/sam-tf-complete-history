@@ -119,22 +119,39 @@ class Discriminator(my.AbstractModule):
                                                               labels=self.real_labels)
         self.e_loss_mean = tf.reduce_mean(self.e_loss)
 
+        # Add a gradient penalty (motivation from WGANs (Gulrajani),
+        # but empirically useful in JS-GANs(Lucic et al. 2017))
+        shape_obz = (tf.to_int64(U.batch_size(p_obz)),) + self.ob_shape
+        eps_obz = tf.random_uniform(shape=shape_obz, minval=0.0, maxval=1.0)
+        obz_interp = eps_obz * p_obz + (1. - eps_obz) * e_obz
+        shape_acs = (tf.to_int64(U.batch_size(p_acs)),) + self.ac_shape
+        eps_acs = tf.random_uniform(shape=shape_acs, minval=0.0, maxval=1.0)
+        acs_interp = eps_acs * p_acs + (1. - eps_acs) * e_acs
+        self.interp_scores = self.reward_nn(obz_interp, acs_interp)
+        grads = tf.gradients(self.interp_scores, [obz_interp, acs_interp], name="interp_grads")[0]
+        grad_l2 = tf.sqrt(tf.reduce_sum(tf.square(grads)))
+        self.grad_pen = tf.reduce_mean(tf.square(grad_l2 - 1.0))
+
         # Assemble previous elements into the losses ops
         self.losses = [self.p_loss_mean,
                        self.e_loss_mean,
                        self.ent_mean,
                        self.ent_loss,
                        self.p_acc,
-                       self.e_acc]
+                       self.e_acc,
+                       self.grad_pen]
         self.loss_names = ["policy_loss", "expert_loss", "ent_mean", "ent_loss",
-                           "policy_acc", "expert_acc"]
+                           "policy_acc", "expert_acc", "pd_grad_pen"]
         self.loss_names = ["d_" + e for e in self.loss_names]
         p_e_losses = tf.concat([self.p_loss, self.e_loss], axis=0)
-        self.loss = tf.reduce_sum(self.weights * p_e_losses) + self.ent_loss
+        self.loss = tf.reduce_sum(self.weights * p_e_losses) + self.ent_loss + self.grad_pen
+        # Add coeff in front of gradient penalty
 
         # Create Theano-like op that computes the discriminator losses and gradients
         self.lossandgrad = U.function([p_obs, p_acs, e_obs, e_acs],
-                                      self.losses + [U.flatgrad(self.loss, self.trainable_vars)])
+                                      self.losses + [U.flatgrad(self.loss,
+                                                                self.trainable_vars,
+                                                                self.hps.clip_norm)])
 
         # Create Theano-like op that compute the synthetic reward
         if self.hps.non_satur_grad:

@@ -170,12 +170,11 @@ class CategoricalPd(Pd):
     def sample(self):
         """Technically this function does not sample from a categorical,
         but uses the Gumbel-Max trick.
-        Why not softmax (next function)? Argmax is non-differentiable right?
-        Indeed, but we are working with bandit information here, and having zero gradients
-        for actions the agent did not pick (result of using the argmax) is in line with
-        the setting at hand (e.g. moving up in a game: the reward received only tells something
-        about the quality of the action "moving up", nothing else. 0 gradient is what we want
-        for all the other actions to properly model the setting, hence the argmax and not softmax)
+        'argmax' being a non-differentiable function, most gradients flowing back through
+        this operation will be filled with zeros. This sampling function can however be
+        use whenever the loss being differentiated does not involve the sample itself
+        but the parameters of the distribution (e.g. ppo/trpo's loss uses the logprob,
+        which is a function of the parameter, not the result of `sample`).
         """
         u = tf.random_uniform(tf.shape(self.logits), dtype=self.logits.dtype)
         return tf.argmax(self.logits - tf.log(-tf.log(u)), axis=-1)

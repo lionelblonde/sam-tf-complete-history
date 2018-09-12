@@ -279,7 +279,7 @@ def sam_argparser(description="SAM Experiment"):
                         choices=['relu', 'leaky_relu', 'prelu', 'elu', 'selu', 'tanh'])
     parser.add_argument('--hid_w_init', type=str, default='he_normal',
                         choices=['he_normal', 'he_uniform', 'xavier_normal', 'xavier_uniform'])
-    parser.add_argument('--ac_branch_in', type=int, default=2)
+    parser.add_argument('--ac_branch_in', type=int, default=1)
     boolean_flag(parser, 'with_layernorm', default=False)
     parser.add_argument('--d_ent_reg_scale', type=float, default=0.,
                         help='scale of the dicriminator entropy term')

@@ -47,7 +47,7 @@ class XPOAgent(my.AbstractModule):
         # Rescale observations
         if self.hps.from_raw_pixels:
             # Scale pixel values
-            obz = ob / 255.0
+            obz = tf.cast(ob, tf.float32) / 255.0
         else:
             if self.hps.rmsify_obs:
                 # Smooth out observations using running statistics and clip
