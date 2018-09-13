@@ -170,12 +170,11 @@ class RB(object):
         assert self.num_entries == 0 and self.num_demos == 0
         logger.info("adding demonstrations to memory")
         # Zip transition atoms
-        transitions = zipsame(dset.obs0, dset.acs, dset.rews, dset.obs1, dset.dones1)
+        transitions = zipsame(dset.obs0, dset.acs, dset.env_rews, dset.obs1, dset.dones1)
         # Note: careful w/ the order, it should correspond to the order in `append` signature
         for transition in transitions:
             self.append(*transition, is_demo=True)
             self.num_demos += 1
-        print("num demos: {}".format(self.num_demos))  # FIXME
         assert self.num_demos == self.num_entries
         logger.info("  num entries in memory after addition: {}".format(self.num_entries))
 
