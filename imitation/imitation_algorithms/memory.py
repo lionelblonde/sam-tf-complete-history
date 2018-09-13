@@ -355,7 +355,7 @@ class PrioritizedRB(RB):
             assert 0 <= idx < self.num_entries, "no element in buffer associated w/ index"
             if idx < self.num_demos:
                 # Add a priority bonus when replaying a demo
-                priority += self.demo_eps
+                priority += self.demos_eps
             self.sum_st[idx] = priority ** self.alpha
             self.min_st[idx] = priority ** self.alpha
             # Update max priority currently in the buffer
@@ -363,7 +363,7 @@ class PrioritizedRB(RB):
 
         if self.ranked:
             # Return indices and associated overriden priorities
-            # Note: returned values are only used in the UNREAL property update function
+            # Note: returned values are only used in the UNREAL priority update function
             return idxs, priorities
 
     def __repr__(self):
@@ -437,7 +437,7 @@ class UnrealRB(PrioritizedRB):
     def append(self, *args, **kwargs):
         super().append(*args, **kwargs)
         idx = self.next_entry_index
-        # Add newly added elements to 'good' virtual sub-buffer
+        # Add newly added elements to 'good' and 'bad' virtual sub-buffer
         self.b_sum_st[idx] = 1
         self.g_sum_st[idx] = 1
 
