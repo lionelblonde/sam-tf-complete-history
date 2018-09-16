@@ -278,6 +278,7 @@ class CriticNN(snt.AbstractModule, AbstractNN):
         self.scope = scope
         self.name = name
         self.hps = hps
+        assert self.hps.ac_branch_in <= len(self.hps.hid_widths)
 
     def _build(self, ob, ac):
         self.set_hid_initializers()

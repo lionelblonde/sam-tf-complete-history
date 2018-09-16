@@ -91,7 +91,7 @@ class TransitionDataset(object):
 
 class DemoDataset(object):
 
-    def __init__(self, expert_arxiv, size, train_fraction=None, randomize=True, full_too=False):
+    def __init__(self, expert_arxiv, size, train_fraction=None, randomize=True):
         """Create a dataset given the `expert_path` expert demonstration trajectories archive.
         Data structure of the archive in .npz format:
         the transitions are saved in python dictionary format with keys:
@@ -121,6 +121,7 @@ class DemoDataset(object):
 
         self.ep_rets = self.traj_data['ep_env_rets'][:self.size]
         self.ep_lens = self.traj_data['ep_lens'][:self.size]
+
         # Compute dataset statistics
         self.ret_mean = np.mean(np.array(self.ep_rets))
         self.ret_std = np.std(np.array(self.ep_rets))
@@ -130,10 +131,6 @@ class DemoDataset(object):
         # Create (obs0,acs) dataset
         self.randomize = randomize
         self.pair_dset = PairDataset(self.obs0, self.acs, self.randomize)
-        if full_too:
-            self.transition_dataset = TransitionDataset(self.obs0, self.acs, self.env_rews,
-                                                        self.dones1, self.obs1,
-                                                        self.randomize)
 
         if train_fraction is not None:
             # Split dataset into train and test datasets (used in BC)
@@ -144,19 +141,6 @@ class DemoDataset(object):
             self.pair_val_set = PairDataset(self.obs0[t_t_frontier:, :],
                                             self.acs[t_t_frontier:, :],
                                             self.randomize)
-            if full_too:
-                self.transition_train_set = TransitionDataset(self.obs0[:t_t_frontier, :],
-                                                              self.acs[:t_t_frontier, :],
-                                                              self.env_rews[:t_t_frontier, :],
-                                                              self.dones1[:t_t_frontier, :],
-                                                              self.obs1[:t_t_frontier, :],
-                                                              self.randomize)
-                self.transition_val_set = TransitionDataset(self.obs0[t_t_frontier:, :],
-                                                            self.acs[t_t_frontier:, :],
-                                                            self.env_rews[t_t_frontier:, :],
-                                                            self.dones1[t_t_frontier:, :],
-                                                            self.obs1[t_t_frontier:, :],
-                                                            self.randomize)
 
         # Log message upon successful trajectory dataset initialization
         self.log_info()

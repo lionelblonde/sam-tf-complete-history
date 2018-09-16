@@ -3,10 +3,13 @@ import copy
 import os.path as osp
 from collections import deque
 
+from gym import spaces
+
 import numpy as np
 
 from imitation.common import tf_util as U
 from imitation.common import logger
+from imitation.common.feeder import Feeder
 from imitation.common.misc_util import zipsame
 from imitation.common.math_util import meanv
 from imitation.common.console_util import timed_cm_wrapper, pretty_iter, pretty_elapsed, columnize
@@ -100,13 +103,14 @@ def traj_ep_generator(env, mu, d, render):
         qs.append(q)
         if render:
             env.render()
-        syn_rew = d.get_reward(ob, ac)  # must be before the `step` in environment
+        syn_rew = d.get_reward(ob, ac)
         new_ob, env_rew, done, _ = env.step(ac)
         syn_rews.append(syn_rew)
         env_rews.append(env_rew)
         cur_ep_len += 1
         cur_ep_syn_ret += syn_rew
         cur_ep_env_ret += env_rew
+        ob = copy.copy(new_ob)
         if done:
             obs = np.array(obs)
             acs = np.array(acs)
@@ -120,8 +124,6 @@ def traj_ep_generator(env, mu, d, render):
                    "ep_len": cur_ep_len,
                    "ep_syn_ret": cur_ep_syn_ret,
                    "ep_env_ret": cur_ep_env_ret}
-            mu.reset_noise()
-            ob = env.reset()
             cur_ep_len = 0
             cur_ep_syn_ret = 0
             cur_ep_env_ret = 0
@@ -129,6 +131,8 @@ def traj_ep_generator(env, mu, d, render):
             acs = []
             syn_rews = []
             env_rews = []
+            mu.reset_noise()
+            ob = env.reset()
 
 
 def evaluate(env,
@@ -192,7 +196,6 @@ def learn(comm,
           summary_dir,
           expert_dataset,
           add_demos_to_mem,
-          pretrained_model_path,
           save_frequency,
           d_lr,
           param_noise_adaption_frequency,
@@ -224,11 +227,6 @@ def learn(comm,
     timed = timed_cm_wrapper(comm=comm, logger=logger,
                              color_message='magenta', color_elapsed_time='cyan')
 
-    # Initialize
-    U.initialize()
-    mu.initialize()
-    d_adam.sync()
-
     if rank == 0:
         # Create summary writer
         writer = U.file_writer(summary_dir)
@@ -243,6 +241,18 @@ def learn(comm,
         _names.extend(mu_l_names)
         _names.extend(d.loss_names)
         _summary = CustomSummary(scalar_keys=_names, family="sam")
+
+    # Initialize
+    U.initialize()
+    mu.initialize()
+    d_adam.sync()
+
+    if isinstance(env.action_space, spaces.Box):
+        # Logging the action scale + performing shape sanity check
+        ac_scale = env.action_space.high
+        logger.info("env-specific action scale (actor outputs in [-1, 1]): {}".format(ac_scale))
+        _ac_ = env.action_space.sample()
+        assert _ac_.shape == ac_scale.shape  # gym sanity check
 
     # Create segment generator for training the agent
     seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch, comm)
@@ -282,13 +292,6 @@ def learn(comm,
     # Only one of those three parameters can be set by the user (all three are zero by default)
     assert sum([max_iters > 0, max_timesteps > 0, max_episodes > 0]) == 1
 
-    # If pretrained weights are provided
-    if pretrained_model_path is not None:
-        U.load_model(pretrained_model_path, var_list=mu.actor.vars)
-        logger.info("actor model loaded from: {}".format(pretrained_model_path))
-        U.load_model(pretrained_model_path, var_list=mu.critic.vars)
-        logger.info("critic model loaded from: {}".format(pretrained_model_path))
-
     while True:
 
         if max_timesteps and timesteps_so_far >= max_timesteps:
@@ -316,7 +319,7 @@ def learn(comm,
         with timed("sampling mini-batch"):
             seg = seg_gen.__next__()
         # Extend deques with collected experiental data
-        acs, qs = seg['acs'], seg['qs']
+        obs, acs, qs = seg['obs'], seg['acs'], seg['qs']
         lens, syn_rets, env_rets = seg['ep_lens'], seg['ep_syn_rets'], seg['ep_env_rets']
         ac_buffer.extend(acs)
         q_buffer.extend(qs)
@@ -329,28 +332,62 @@ def learn(comm,
             logger.info("training [{}/{}]".format(training_step + 1, training_steps_per_iter))
 
             for d_step in range(d_steps):
-                # Update discriminator w/ samples from replay buffer & expert dataset
+                # Update disciminator
                 logger.info("  updating d [{}/{}]".format(d_step + 1, d_steps))
-                # Collect generated data from experience buffer
+
+                # Train d with Feeder on the most recently collected data + expert data
+                # Create Feeder object to iterate over (ob, ret) pairs
+                feeder = Feeder(data_map=dict(obs=obs, acs=acs), enable_shuffle=True)
+                feeder_batch_size = len(obs) // d_steps
+                for minibatch in feeder.get_feed(batch_size=feeder_batch_size):
+                    # Update discriminator w/ most recently collected samples & expert dataset
+                    ob_pol, ac_pol = minibatch['obs'], minibatch['acs']
+                    # Collect expert data w/ identical batch size (GAN's equal mixture)
+                    ob_exp, ac_exp = expert_dataset.get_next_p_batch(batch_size=len(ob_pol))
+
+                    if isinstance(env.action_space, spaces.Discrete):
+                        # Expand dimension for discete actions envs
+                        ac_pol = np.expand_dims(ac_pol, axis=-1)
+
+                    assert len(ob_exp) == len(ob_pol)
+
+                    # Update running mean and std on states
+                    if hasattr(d, "obs_rms"):
+                        d.obs_rms.update(np.concatenate((ob_pol, ob_exp), axis=0), comm)
+
+                    # Compute losses and gradients
+                    *new_losses, grads = d.lossandgrad(ob_pol, ac_pol, ob_exp, ac_exp)
+                    # Use the retrieved local gradient to make an Adam optimization update
+                    d_adam.update(grads, d_lr)
+                    # Store the losses and gradients in their respective deques
+                    d_grads_buffer.append(grads)
+                    d_losses_buffer.append(new_losses)
+
+                    # Assess consistency of accuracies
+                    assert d.assert_acc_consistency(ob_pol, ac_pol, ob_exp, ac_exp)
+
+                # Train d on data from the replay buffer (might be old might be new) + expert data
+                # Collect generated data from experience replay buffer
                 xp_batch = mu.replay_buffer.sample(batch_size=batch_size)
-                ob_mu, ac_mu = xp_batch['obs0'], xp_batch['acs']
+                ob_pol_, ac_pol_ = xp_batch['obs0'], xp_batch['acs']
 
                 # Collect expert data w/ identical batch size (GAN's equal mixture)
-                ob_expert, ac_expert = expert_dataset.get_next_p_batch(batch_size=batch_size)
+                ob_exp_, ac_exp_ = expert_dataset.get_next_p_batch(batch_size=batch_size)
 
-                # Update running mean and std
-                if hasattr(d, 'obs_rms'):
-                    d.obs_rms.update(np.concatenate((ob_mu, ob_expert), axis=0))
+                # Update running mean and std on states
+                if hasattr(d, "obs_rms"):
+                    d.obs_rms.update(np.concatenate((ob_pol_, ob_exp_), axis=0), comm)
 
                 # Compute losses and gradients
-                *new_losses, grads = d.lossandgrad(ob_mu, ac_mu, ob_expert, ac_expert)
+                *new_losses, grads = d.lossandgrad(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
                 # Use the retrieved local gradient to make an Adam optimization update
                 d_adam.update(grads, d_lr)
                 # Store the losses and gradients in their respective deques
                 d_grads_buffer.append(grads)
                 d_losses_buffer.append(new_losses)
+
                 # Assess consistency of accuracies
-                assert d.assert_acc_consistency(ob_mu, ac_mu, ob_expert, ac_expert)
+                assert d.assert_acc_consistency(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
 
             if mu.param_noise is not None:
                 if training_step % param_noise_adaption_frequency == 0:
@@ -366,12 +403,17 @@ def learn(comm,
                 # Update agent w/ samples from replay buffer
                 logger.info("  updating g [{}/{}]".format(g_step + 1, g_steps))
                 # Train the actor-critic architecture
-                actor_grads, actor_loss, critic_grads, critic_loss = mu.train()
+                losses_and_grads = mu.train()
+                # Unpack the returned training gradients and losses
+                actor_grads = losses_and_grads['actor_grads']
+                actor_losses = losses_and_grads['actor_losses']
+                critic_grads = losses_and_grads['critic_grads']
+                critic_losses = losses_and_grads['critic_losses']
                 # Store the losses and gradients in their respective deques
                 actor_grads_buffer.append(actor_grads)
-                actor_losses_buffer.append(actor_loss)
+                actor_losses_buffer.append(actor_losses)
                 critic_grads_buffer.append(critic_grads)
-                critic_losses_buffer.append(critic_loss)
+                critic_losses_buffer.append(critic_losses)
                 # Update the target networks
                 mu.update_target_net()
 

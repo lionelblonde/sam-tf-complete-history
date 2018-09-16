@@ -33,7 +33,7 @@ class Discriminator(my.AbstractModule):
         # Assemble clipping functions
         unlimited_range = (-np.infty, np.infty)
         if isinstance(self.ac_space, spaces.Box):
-            self.clip_obs = U.clip((-5, 5))
+            self.clip_obs = U.clip((-5., 5.))
         elif isinstance(self.ac_space, spaces.Discrete):
             self.clip_obs = U.clip(unlimited_range)
         else:
@@ -108,8 +108,7 @@ class Discriminator(my.AbstractModule):
         self.p_acc = tf.reduce_mean(tf.sigmoid(self.p_scores))
         self.e_acc = tf.reduce_mean(tf.sigmoid(self.e_scores))
         self.consistency = tf.norm(self.accuracy - (0.5 * (self.p_acc + self.e_acc))) < 1e-8
-        self.assert_acc_consistency = U.function([p_obs, p_acs, e_obs, e_acs],
-                                                 [self.consistency])
+        self.assert_acc_consistency = U.function([p_obs, p_acs, e_obs, e_acs], [self.consistency])
 
         # Build binary classification losses
         self.p_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=self.p_scores,
@@ -120,7 +119,7 @@ class Discriminator(my.AbstractModule):
         self.e_loss_mean = tf.reduce_mean(self.e_loss)
 
         # Add a gradient penalty (motivation from WGANs (Gulrajani),
-        # but empirically useful in JS-GANs(Lucic et al. 2017))
+        # but empirically useful in JS-GANs (Lucic et al. 2017))
         shape_obz = (tf.to_int64(U.batch_size(p_obz)),) + self.ob_shape
         eps_obz = tf.random_uniform(shape=shape_obz, minval=0.0, maxval=1.0)
         obz_interp = eps_obz * p_obz + (1. - eps_obz) * e_obz
@@ -128,9 +127,11 @@ class Discriminator(my.AbstractModule):
         eps_acs = tf.random_uniform(shape=shape_acs, minval=0.0, maxval=1.0)
         acs_interp = eps_acs * p_acs + (1. - eps_acs) * e_acs
         self.interp_scores = self.reward_nn(obz_interp, acs_interp)
-        grads = tf.gradients(self.interp_scores, [obz_interp, acs_interp], name="interp_grads")[0]
-        grad_l2 = tf.sqrt(tf.reduce_sum(tf.square(grads)))
-        self.grad_pen = tf.reduce_mean(tf.square(grad_l2 - 1.0))
+        grads = tf.gradients(self.interp_scores, [obz_interp, acs_interp], name="interp_grads")
+        assert len(grads) == 2, "length must be exacty 2"
+        grad_squared_norms = [tf.reduce_mean(tf.square(grad)) for grad in grads]
+        grad_norm = tf.sqrt(tf.reduce_sum(grad_squared_norms))
+        self.grad_pen = tf.reduce_mean(tf.square(grad_norm - 1.0))
 
         # Assemble previous elements into the losses ops
         self.losses = [self.p_loss_mean,
@@ -144,8 +145,8 @@ class Discriminator(my.AbstractModule):
                            "policy_acc", "expert_acc", "pd_grad_pen"]
         self.loss_names = ["d_" + e for e in self.loss_names]
         p_e_losses = tf.concat([self.p_loss, self.e_loss], axis=0)
-        self.loss = tf.reduce_sum(self.weights * p_e_losses) + self.ent_loss + self.grad_pen
-        # Add coeff in front of gradient penalty
+        self.loss = tf.reduce_sum(self.weights * p_e_losses) + self.ent_loss + 10 * self.grad_pen
+        # gradient penalty coefficient aligned with the value used in Gulrajani et al.
 
         # Create Theano-like op that computes the discriminator losses and gradients
         self.lossandgrad = U.function([p_obs, p_acs, e_obs, e_acs],

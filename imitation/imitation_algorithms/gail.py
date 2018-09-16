@@ -60,7 +60,7 @@ def traj_segment_generator(env, pi, d, timesteps_per_batch, sample_or_mode):
         acs[i] = ac
         vs[i] = v_pred
         dones[i] = done
-        syn_rew = d.get_reward(ob, ac)  # must be before the `step` in environment
+        syn_rew = d.get_reward(ob, ac)
         ob, env_rew, done, _ = env.step(ac)
         syn_rews[i] = syn_rew
         env_rews[i] = env_rew
@@ -190,7 +190,6 @@ def learn(comm,
           gamma,
           max_kl,
           expert_dataset,
-          pretrained_model_path,
           g_steps,
           d_steps,
           save_frequency,
@@ -319,11 +318,6 @@ def learn(comm,
 
     # Only one of those three parameters can be set by the user (all three are zero by default)
     assert sum([max_iters > 0, max_timesteps > 0, max_episodes > 0]) == 1
-
-    # If pretrained weights are provided
-    if pretrained_model_path is not None:
-        U.load_model(pretrained_model_path, var_list=pi.vars)
-        logger.info("model loaded from: {}".format(pretrained_model_path))
 
     while True:
 

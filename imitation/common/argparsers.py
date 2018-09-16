@@ -248,7 +248,7 @@ def sam_argparser(description="SAM Experiment"):
     parser.add_argument('--num_timesteps', help='cummulative number of timesteps since launch',
                         type=int, default=int(1e6))
     parser.add_argument('--timesteps_per_batch', help='number of interactions per iteration',
-                        type=int, default=1024)
+                        type=int, default=16)
     parser.add_argument('--batch_size', help='minibatch size', type=int, default=32)
     boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
     parser.add_argument('--num_trajs', help='number of trajectories to evaluate/gather',

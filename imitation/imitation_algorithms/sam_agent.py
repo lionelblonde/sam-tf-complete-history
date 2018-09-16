@@ -25,10 +25,10 @@ def get_target_updates(vars_, targ_vars, tau):
     hard_updates = []
     soft_updates = []
     assert len(vars_) == len(targ_vars)
-    for var, targ_var in zipsame(vars_, targ_vars):
-        logger.info('  {} <- {}'.format(targ_var.name, var.name))
-        hard_updates.append(tf.assign(targ_var, var))
-        soft_updates.append(tf.assign(targ_var, (1. - tau) * targ_var + tau * var))
+    for var_, targ_var in zipsame(vars_, targ_vars):
+        logger.info('  {} <- {}'.format(targ_var.name, var_.name))
+        hard_updates.append(tf.assign(targ_var, var_))
+        soft_updates.append(tf.assign(targ_var, (1. - tau) * targ_var + tau * var_))
     assert len(hard_updates) == len(vars_)
     assert len(soft_updates) == len(vars_)
     return tf.group(*hard_updates), tf.group(*soft_updates)  # ops that group ops
@@ -43,14 +43,14 @@ def get_p_actor_updates(actor, perturbed_actor, pn_std):
     assert len(actor.perturbable_vars) == len(perturbed_actor.perturbable_vars)
 
     updates = []
-    for var, perturbed_var in zipsame(actor.vars, perturbed_actor.vars):
-        if var in actor.perturbable_vars:
-            logger.info("  {} <- {} + noise".format(perturbed_var.name, var.name))
-            noised_up_var = var + tf.random_normal(tf.shape(var), mean=0., stddev=pn_std)
+    for var_, perturbed_var in zipsame(actor.vars, perturbed_actor.vars):
+        if var_ in actor.perturbable_vars:
+            logger.info("  {} <- {} + noise".format(perturbed_var.name, var_.name))
+            noised_up_var = var_ + tf.random_normal(tf.shape(var_), mean=0., stddev=pn_std)
             updates.append(tf.assign(perturbed_var, noised_up_var))
         else:
-            logger.info("  {} <- {}".format(perturbed_var.name, var.name))
-            updates.append(tf.assign(perturbed_var, var))
+            logger.info("  {} <- {}".format(perturbed_var.name, var_.name))
+            updates.append(tf.assign(perturbed_var, var_))
     assert len(updates) == len(actor.vars)
     return tf.group(*updates)
 
@@ -83,7 +83,7 @@ class SAMAgent(my.AbstractModule):
         # Assemble clipping functions
         unlimited_range = (-np.infty, np.infty)
         if isinstance(self.ac_space, spaces.Box):
-            self.clip_obs = U.clip((-5, 5))
+            self.clip_obs = U.clip((-5., 5.))
             self.clip_acs = U.clip(unlimited_range)
             self.clip_rets = U.clip(unlimited_range)
         elif isinstance(self.ac_space, spaces.Discrete):
@@ -395,7 +395,8 @@ class SAMAgent(my.AbstractModule):
                                       self.hps.clip_norm)
 
         # Create Theano-like ops
-        self.actor_lossandgrads = U.function(phs, self.actor_losses + [self.actor_grads])
+        self.get_actor_losses = U.function(phs, self.actor_losses)
+        self.get_actor_grads = U.function(phs, self.actor_grads)
 
         # Create mpi adam optimizer
         self.actor_optimizer = MpiAdam(var_list=self.actor.trainable_vars)
@@ -472,7 +473,9 @@ class SAMAgent(my.AbstractModule):
                                        self.hps.clip_norm)
 
         # Create Theano-like ops
-        self.critic_lossandgrads = U.function(phs, self.critic_losses + [self.critic_grads])
+        self.get_critic_losses = U.function(phs, self.critic_losses)
+        self.get_critic_grads = U.function(phs, self.critic_grads)
+
         if self.hps.prioritized_replay:  # `self.iws` already properly inserted
             td_errors_ops = [self.td_errors_1] + ([self.td_errors_n]
                                                   if self.hps.n_step_returns
@@ -521,7 +524,7 @@ class SAMAgent(my.AbstractModule):
             # Create Theano-like operator
             self.popart = U.function([self.old_mean, self.old_std], [self.popart_op])
 
-    def predict(self, obs, apply_noise=True, compute_q=True):
+    def predict(self, obs, apply_noise, compute_q):
         """Predict an action, with or without perturbation,
         and optionaly compute and return the associated Q value.
         """
@@ -602,8 +605,11 @@ class SAMAgent(my.AbstractModule):
             b_vs.append(targ_q_n)
         if self.hps.prioritized_replay:
             b_vs.append(b_iws)
-        *actor_losses, actor_grads = self.actor_lossandgrads(b_obs0)
-        *critic_losses, critic_grads = self.critic_lossandgrads(*b_vs)
+        actor_losses = self.get_actor_losses(b_obs0)
+        actor_grads = self.get_actor_grads(b_obs0)
+        critic_losses = self.get_critic_losses(*b_vs)
+        critic_grads = self.get_critic_grads(*b_vs)
+
         # Perform mpi gradient descent update
         self.actor_optimizer.update(actor_grads, stepsize=self.hps.actor_lr)
         self.critic_optimizer.update(critic_grads, stepsize=self.hps.critic_lr)
@@ -624,7 +630,11 @@ class SAMAgent(my.AbstractModule):
             new_priorities = np.abs(flat_td_errors) + 1e-6  # epsilon from paper
             self.replay_buffer.update_priorities(b_idxs, new_priorities)
 
-        return actor_grads, list(actor_losses), critic_grads, list(critic_losses)
+        # Aggregate the elements to return
+        losses_and_grads = dict(actor_grads=actor_grads, actor_losses=actor_losses,
+                                critic_grads=critic_grads, critic_losses=critic_losses)
+
+        return losses_and_grads
 
     def initialize(self, sess=None):
         """Initialize both actor and critic, as well as their target counterparts"""

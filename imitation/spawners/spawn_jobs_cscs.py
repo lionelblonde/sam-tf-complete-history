@@ -4,7 +4,7 @@ import numpy as np
 from subprocess import call
 from copy import copy
 
-from imitation.common.misc_util import flatten_lists, zipsame
+from imitation.common.misc_util import flatten_lists, zipsame, boolean_flag
 
 
 parser = argparse.ArgumentParser(description='SAM Job Orchestrator + HP Search')
@@ -16,6 +16,7 @@ parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], defaul
                     help="benchmark on which to run experiments")
 parser.add_argument('--num_trials', type=int, default=50,
                     help="number of different models to run for the HP search (default: 50)")
+boolean_flag(parser, 'call', default=False)
 args = parser.parse_args()
 
 MUJOCO_ENVS_SET = ['Hopper-v2', 'HalfCheetah-v2', 'Walker2d-v2']
@@ -96,8 +97,8 @@ def get_rand_hyperparameters(args):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 50,
-                     'eval_steps_per_iter': 80,
+                     'training_steps_per_iter': 20,
+                     'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 16,
                      'batch_size': np.random.choice([16, 32, 64]),
@@ -115,6 +116,7 @@ def get_rand_hyperparameters(args):
                      'd_hid_widths': rand_tuple_from_list([(128,)]),
                      'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
                      'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
+                     'tau': np.random.choice([0.001, 0.01]),
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -128,7 +130,7 @@ def get_rand_hyperparameters(args):
                      'noise_type': np.random.choice(['adaptive-param_0.2']),
                      'param_noise_adaption_frequency': 20,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
-                     'mem_size': int(5e5),
+                     'mem_size': int(1e5),
                      'prioritized_replay': np.random.choice([0, 1]),
                      'alpha': 0.3,
                      'beta': 1.,
@@ -137,14 +139,11 @@ def get_rand_hyperparameters(args):
                      'unreal': 0,
                      'sr_loss_scale': 0.,
                      'q_loss_scale': 1.,
-                     'wd_scale': np.random.choice([0.01, 0.001]),
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
+                     'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
-                     'n': np.random.choice([5, 10, 15]),
-                     'pretrain': 0,
-                     'pretrained_model_path': "",
-                     'num_bc_iters': int(1e3)}
+                     'n': np.random.choice([5, 10, 15])}
             return [dup_hps_for_env_w_demos(hpmap, env, demos)
                     for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
     # MuJoCo
@@ -189,8 +188,8 @@ def get_rand_hyperparameters(args):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 50,
-                     'eval_steps_per_iter': 80,
+                     'training_steps_per_iter': 20,
+                     'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 16,
                      'batch_size': np.random.choice([16, 32, 64]),
@@ -202,6 +201,7 @@ def get_rand_hyperparameters(args):
                      'd_hid_widths': rand_tuple_from_list([(64, 64)]),
                      'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
                      'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
+                     'tau': np.random.choice([0.001, 0.01]),
                      'with_layernorm': 1,
                      'ac_branch_in': 2,
                      'd_ent_reg_scale': 0.,
@@ -217,7 +217,7 @@ def get_rand_hyperparameters(args):
                                                      'adaptive-param_0.2, ou_0.2, normal_0.2']),
                      'param_noise_adaption_frequency': 20,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
-                     'mem_size': int(5e5),
+                     'mem_size': int(1e5),
                      'prioritized_replay': np.random.choice([0, 1]),
                      'alpha': 0.3,
                      'beta': 1.,
@@ -226,14 +226,11 @@ def get_rand_hyperparameters(args):
                      'unreal': 0,
                      'sr_loss_scale': 0.,
                      'q_loss_scale': 1.,
-                     'wd_scale': np.random.choice([0.01, 0.001]),
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
+                     'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
-                     'n': np.random.choice([50, 75, 100]),
-                     'pretrain': 0,
-                     'pretrained_model_path': "",
-                     'num_bc_iters': int(1e3)}
+                     'n': np.random.choice([50, 75, 100])}
             return [dup_hps_for_env_w_demos(hpmap, env, demos)
                     for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
@@ -328,8 +325,9 @@ def run(args):
         job_name = "hp_search_{}.sh".format(i)
         with open(osp.join(args.script_dir, job_name), 'w') as f:
             f.write(js)
-        # Spawn the job!
-        # call(["sbatch", "./{}".format(job_name)])
+        if args.call:
+            # Spawn the job!
+            call(["sbatch", "./{}".format(job_name)])
     # Summarize the number of jobs spawned
     print("total num job (successfully) spawned: {}".format(len(job_strs)))
 

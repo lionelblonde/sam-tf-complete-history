@@ -43,14 +43,8 @@ def imitate_via_gail(args):
     experiment_name = experiment.get_long_name()
 
     # Create the expert demonstrations dataset from expert trajectories
-    input_args = dict(expert_arxiv=args.expert_path, size=args.num_demos)
-    if args.pretrain:
-        extra_args = dict(train_fraction=0.7, full_too=False)
-        input_args.update(extra_args)
-    dataset = DemoDataset(**input_args)
+    dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos)
 
-    # Behavioral cloning  #TODO
-    pretrained_model_path = None
     comm.Barrier()
 
     # Train GAIL imitation policy
@@ -62,7 +56,6 @@ def imitate_via_gail(args):
                ckpt_dir=osp.join(args.checkpoint_dir, experiment_name),
                summary_dir=osp.join(args.summary_dir, experiment_name),
                expert_dataset=dataset,
-               pretrained_model_path=pretrained_model_path,
                g_steps=args.g_steps,
                d_steps=args.d_steps,
                sample_or_mode=args.sample_or_mode,

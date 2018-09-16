@@ -44,19 +44,12 @@ def imitate_via_sam(args):
     experiment_name = experiment.get_long_name()
 
     # Create the expert demonstrations dataset from expert trajectories
-    input_args = dict(expert_arxiv=args.expert_path, size=args.num_demos)
-    if args.pretrain:
-        extra_args = dict(train_fraction=0.7, full_too=False)
-        input_args.update(extra_args)
-    dataset = DemoDataset(**input_args)
+    dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos)
 
     # Create an evaluation environment not to mess up with training rollouts
     eval_env = None
     if rank == 0:
         eval_env = make_env(args)(args.env_id, args.seed, "eval", args.horizon)
-
-    # Behavioral cloning  #TODO
-    pretrained_model_path = None
 
     comm.Barrier()
 
@@ -71,7 +64,6 @@ def imitate_via_sam(args):
               summary_dir=osp.join(args.summary_dir, experiment_name),
               expert_dataset=dataset,
               add_demos_to_mem=args.add_demos_to_mem,
-              pretrained_model_path=pretrained_model_path,
               save_frequency=args.save_frequency,
               d_lr=args.d_lr,
               param_noise_adaption_frequency=args.param_noise_adaption_frequency,
