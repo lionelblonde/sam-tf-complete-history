@@ -4,19 +4,24 @@ import numpy as np
 from subprocess import call
 from copy import copy
 
-from imitation.common.misc_util import flatten_lists, zipsame, boolean_flag
+from imitation.common.misc_util import flatten_lists, zipsame
 
 
 parser = argparse.ArgumentParser(description='SAM Job Orchestrator + HP Search')
 parser.add_argument('--script_dir', type=str, default="scripts/cscs",
                     help="where to store the generated scripts")
-parser.add_argument('--task', type=str, choices=['ppo', 'sam'], default='ppo',
-                    help="whether to train an expert with PPO or an imitator with SAM")
+parser.add_argument('--task', type=str, choices=['ppo', 'gail', 'sam'], default='ppo',
+                    help="whether to train an expert with PPO or an imitator with GAIL or SAM")
 parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco',
                     help="benchmark on which to run experiments")
 parser.add_argument('--num_trials', type=int, default=50,
                     help="number of different models to run for the HP search (default: 50)")
-boolean_flag(parser, 'call', default=False)
+parser.add_argument('--demos_dir', type=str, default=None,
+                    help="location of the expert demos arxivs")
+parser.add_argument('--num_workers', type=int, default=32,
+                    help="number of parallel mpi workers to use for each job")
+parser.add_argument('--call', type=int, choices=[0, 1], default=0,
+                    help="whether to directly launch the jobs once created")
 args = parser.parse_args()
 
 MUJOCO_ENVS_SET = ['Hopper-v2', 'HalfCheetah-v2', 'Walker2d-v2']
@@ -41,6 +46,9 @@ def dup_hps_for_env_w_demos(hpmap, env, demos):
     hpmap_.update({'expert_path': demos})
     return hpmap_
 
+def dup_hps_for_seed(hpmap, seed):
+
+
 
 def rand_tuple_from_list(list_):
     """Return a random tuple from a list of tuples
@@ -51,7 +59,15 @@ def rand_tuple_from_list(list_):
 
 
 def get_rand_hyperparameters(args):
-    """Return a map of hyperparameters"""
+    """Return a map of hyperparameters
+    Example of hyperparameter dictionary:
+        {'hid_widths': rand_tuple_from_list([(64, 64)]),  # list of tuples
+         'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
+         'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
+         'tau': np.random.choice([0.001, 0.01]),
+         'with_layernorm': 1,
+         'ent_reg_scale': 0.}
+    """
     # Atari
     if args.benchmark == 'atari':
         # Expert
@@ -87,6 +103,46 @@ def get_rand_hyperparameters(args):
             return [dup_hps_for_env(hpmap, env)
                     for env in ATARI_ENVS_SET]
         # Imitator
+        elif args.task == 'gail':
+            hpmap = {'from_raw_pixels': 1,
+                     'seed': 0,
+                     'checkpoint_dir': "data/imitation_checkpoints",
+                     'summary_dir': "data/summaries",
+                     'log_dir': "data/logs",
+                     'task': "imitate_via_gail",
+                     'rmsify_obs': 0,
+                     'save_frequency': 100,
+                     'num_timesteps': int(1e7),
+                     'timesteps_per_batch': 1024,
+                     'batch_size': 64,
+                     'sample_or_mode': 1,
+                     'num_demos': 16,
+                     'g_steps': 3,
+                     'd_steps': 1,
+                     'non_satur_grad': 0,
+                     'pol_nums_filters': (8, 16),
+                     'pol_filter_shapes': (8, 4),
+                     'pol_stride_shapes': (4, 2),
+                     'pol_hid_widths': (128,),
+                     'd_nums_filters': (8, 16),
+                     'd_filter_shapes': (8, 4),
+                     'd_stride_shapes': (4, 2),
+                     'd_hid_widths': (128,),
+                     'hid_nonlin': 'tanh',
+                     'hid_w_init': 'xavier_normal',
+                     'gaussian_fixed_var': 1,
+                     'with_layernorm': 0,
+                     'max_kl': 0.01,
+                     'pol_ent_reg_scale': 0.,
+                     'd_ent_reg_scale': 0.,
+                     'label_smoothing': 1,
+                     'one_sided_label_smoothing': 1,
+                     'vf_lr': 3e-4,
+                     'd_lr': 3e-4,
+                     'gamma': 0.995,
+                     'gae_lambda': 0.99}
+            return [dup_hps_for_env_w_demos(hpmap, env, demos)
+                    for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
@@ -97,38 +153,40 @@ def get_rand_hyperparameters(args):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 20,
+                     'training_steps_per_iter': np.random.choice([2, 4, 8, 16, 32]),
                      'eval_steps_per_iter': 10,
                      'render': 0,
-                     'timesteps_per_batch': 16,
+                     'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
                      'batch_size': np.random.choice([16, 32, 64]),
                      'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
-                     'actorcritic_nums_filters': rand_tuple_from_list([(8, 16)]),
-                     'actorcritic_filter_shapes': rand_tuple_from_list([(8, 4)]),
-                     'actorcritic_stride_shapes': rand_tuple_from_list([(4, 2)]),
-                     'actorcritic_hid_widths': rand_tuple_from_list([(128,)]),
-                     'd_nums_filters': rand_tuple_from_list([(8, 16)]),
-                     'd_filter_shapes': rand_tuple_from_list([(8, 4)]),
-                     'd_stride_shapes': rand_tuple_from_list([(4, 2)]),
-                     'd_hid_widths': rand_tuple_from_list([(128,)]),
-                     'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
-                     'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
+                     'actorcritic_nums_filters': (8, 16),
+                     'actorcritic_filter_shapes': (8, 4),
+                     'actorcritic_stride_shapes': (4, 2),
+                     'actorcritic_hid_widths': (128,),
+                     'd_nums_filters': (8, 16),
+                     'd_filter_shapes': (8, 4),
+                     'd_stride_shapes': (4, 2),
+                     'd_hid_widths': (128,),
+                     'hid_nonlin': 'leaky_relu',
+                     'hid_w_init': 'he_normal',
                      'tau': np.random.choice([0.001, 0.01]),
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
+                     'label_smoothing': 1,
+                     'one_sided_label_smoothing': 1,
                      'reward_scale': 1.,
                      'rmsify_rets': 1,
                      'enable_popart': np.random.choice([0, 1]),
-                     'actor_lr': np.random.choice([1e-4, 3e-4, 1e-5]),
-                     'critic_lr': np.random.choice([1e-4, 3e-4, 1e-5]),
-                     'd_lr': np.random.choice([1e-4, 3e-4, 1e-5]),
+                     'actor_lr': 1e-4,
+                     'critic_lr': 1e-3,
+                     'd_lr': 3e-4,
                      'clip_norm': 5.,
-                     'noise_type': np.random.choice(['adaptive-param_0.2']),
-                     'param_noise_adaption_frequency': 20,
+                     'noise_type': np.random.choice(['adaptive-param_0.1', 'adaptive-param_0.2']),
+                     'param_noise_adaption_frequency': 40,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
                      'mem_size': int(1e5),
                      'prioritized_replay': np.random.choice([0, 1]),
@@ -137,13 +195,12 @@ def get_rand_hyperparameters(args):
                      'ranked': 0,
                      'add_demos_to_mem': 0,
                      'unreal': 0,
-                     'sr_loss_scale': 0.,
                      'q_loss_scale': 1.,
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
-                     'n': np.random.choice([5, 10, 15])}
+                     'n': np.random.choice([10, 20, 40, 60])}
             return [dup_hps_for_env_w_demos(hpmap, env, demos)
                     for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
     # MuJoCo
@@ -178,6 +235,40 @@ def get_rand_hyperparameters(args):
             return [dup_hps_for_env(hpmap, env)
                     for env in MUJOCO_ENVS_SET]
         # Imitator
+        elif args.task == 'gail':
+            hpmap = {'from_raw_pixels': 0,
+                     'seed': 0,
+                     'checkpoint_dir': "data/imitation_checkpoints",
+                     'summary_dir': "data/summaries",
+                     'log_dir': "data/logs",
+                     'task': "imitate_via_gail",
+                     'rmsify_obs': 1,
+                     'save_frequency': 100,
+                     'num_timesteps': int(1e7),
+                     'timesteps_per_batch': 1024,
+                     'batch_size': 64,
+                     'sample_or_mode': 1,
+                     'num_demos': 16,
+                     'g_steps': 3,
+                     'd_steps': 1,
+                     'non_satur_grad': 0,
+                     'pol_hid_widths': (100, 100),
+                     'd_hid_widths': (100, 100),
+                     'hid_nonlin': 'tanh',
+                     'hid_w_init': 'xavier_normal',
+                     'gaussian_fixed_var': 1,
+                     'with_layernorm': 0,
+                     'max_kl': 0.01,
+                     'pol_ent_reg_scale': 0.,
+                     'd_ent_reg_scale': 0.,
+                     'label_smoothing': 1,
+                     'one_sided_label_smoothing': 1,
+                     'vf_lr': 3e-4,
+                     'd_lr': 3e-4,
+                     'gamma': 0.995,
+                     'gae_lambda': 0.99}
+            return [dup_hps_for_env_w_demos(hpmap, env, demos)
+                    for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
@@ -188,34 +279,36 @@ def get_rand_hyperparameters(args):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 20,
+                     'training_steps_per_iter': np.random.choice([2, 4, 8, 16, 32]),
                      'eval_steps_per_iter': 10,
                      'render': 0,
-                     'timesteps_per_batch': 16,
+                     'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
                      'batch_size': np.random.choice([16, 32, 64]),
                      'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
-                     'actorcritic_hid_widths': rand_tuple_from_list([(64, 64)]),
-                     'd_hid_widths': rand_tuple_from_list([(64, 64)]),
-                     'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
-                     'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
+                     'actorcritic_hid_widths': (64, 64),
+                     'd_hid_widths': (64, 64),
+                     'hid_nonlin': 'leaky_relu',
+                     'hid_w_init': 'he_normal',
                      'tau': np.random.choice([0.001, 0.01]),
                      'with_layernorm': 1,
                      'ac_branch_in': 2,
                      'd_ent_reg_scale': 0.,
+                     'label_smoothing': 1,
+                     'one_sided_label_smoothing': 1,
                      'reward_scale': 1.,
                      'rmsify_rets': 1,
                      'enable_popart': np.random.choice([0, 1]),
-                     'actor_lr': np.random.choice([1e-4, 3e-4, 1e-5]),
-                     'critic_lr': np.random.choice([1e-4, 3e-4, 1e-5]),
-                     'd_lr': np.random.choice([1e-4, 3e-4, 1e-5]),
+                     'actor_lr': 1e-4,
+                     'critic_lr': 1e-3,
+                     'd_lr': 3e-4,
                      'clip_norm': 5.,
                      'noise_type': np.random.choice(['adaptive-param_0.2',
                                                      'adaptive-param_0.2, ou_0.2',
                                                      'adaptive-param_0.2, ou_0.2, normal_0.2']),
-                     'param_noise_adaption_frequency': 20,
+                     'param_noise_adaption_frequency': 40,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
                      'mem_size': int(1e5),
                      'prioritized_replay': np.random.choice([0, 1]),
@@ -224,13 +317,12 @@ def get_rand_hyperparameters(args):
                      'ranked': 0,
                      'add_demos_to_mem': 0,
                      'unreal': 0,
-                     'sr_loss_scale': 0.,
                      'q_loss_scale': 1.,
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
-                     'n': np.random.choice([50, 75, 100])}
+                     'n': np.random.choice([10, 20, 40, 60])}
             return [dup_hps_for_env_w_demos(hpmap, env, demos)
                     for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
@@ -267,12 +359,13 @@ def unroll_options(hpmap):
                      'with_layernorm',
                      'rmsify_rets',
                      'enable_popart',
+                     'label_smoothing',
+                     'one_sided_label_smoothing',
                      'prioritized_replay',
                      'ranked',
                      'add_demos_to_mem',
                      'unreal',
-                     'n_step_returns',
-                     'pretrain']
+                     'n_step_returns']
     for k, v in hpmap.items():
         if k in no_value_keys and v == 0:
             base_str += " --no-{}".format(k)
@@ -287,14 +380,21 @@ def unroll_options(hpmap):
     return base_str
 
 
-def format_exp_str(hpmap):
+def format_exp_str(hpmap, task):
     """Build the experiment name"""
     hpmap_str = unroll_options(hpmap)
-    return """python -m imitation.imitation_algorithms.run_sam {}""".format(hpmap_str)
+    # Parse task name
+    if task == 'ppo':
+        script = "run_xpo_expert"
+    elif task == 'gail':
+        script = "run_gail"
+    elif task == 'sam':
+        script = "run_sam"
+    return """python -m imitation.imitation_algorithms.{}{}""".format(script, hpmap_str)
 
 
-def get_job_map(idx, env, task):
-    return {'ntasks': '32',
+def get_job_map(idx, env, task, num_workers):
+    return {'ntasks': num_workers,
             'time': '23:59:59',
             'job-name': "hpsearch{}_{}_{}".format(idx, task, env.split('-')[0])}
 
@@ -303,19 +403,16 @@ def run(args):
     """Spawn jobs"""
     # Grab some random hps
     hpmaps = [get_rand_hyperparameters(args) for _ in range(args.num_trials)]
-    print(len(hpmaps))
-    for hpmap in hpmaps:
-        print(hpmap)
     # Flatten into a 1-dim list
     hpmaps = flatten_lists(hpmaps)
-    print(len(hpmaps))
     # Create associated task strings
-    exp_strs = [format_exp_str(hpmap) for hpmap in hpmaps]
+    exp_strs = [format_exp_str(hpmap, args.task) for hpmap in hpmaps]
     if not len(exp_strs) == len(set(exp_strs)):
         # Terminate in case of duplicate experiment (extremely unlikely though)
         raise ValueError("bad luck, there are dupes -> Try again :)")
     # Create the job maps
-    job_maps = [get_job_map(i, hpmap['env_id'], args.task) for i, hpmap in enumerate(hpmaps)]
+    job_maps = [get_job_map(i, hpmap['env_id'], args.task, args.num_workers)
+                for i, hpmap in enumerate(hpmaps)]
     # Finally get all the required job strings
     job_strs = [format_job_str(jm, es) for jm, es in zipsame(job_maps, exp_strs)]
     # Spawn the jobs
@@ -333,4 +430,8 @@ def run(args):
 
 
 if __name__ == "__main__":
+    # Prepend the full path to the demos arxis
+    MUJOCO_EXPERT_DEMOS = [osp.join(args.demos_dir, arxiv) for arxiv in MUJOCO_EXPERT_DEMOS]
+    ATARI_EXPERT_DEMOS = [osp.join(args.demos_dir, arxiv) for arxiv in ATARI_EXPERT_DEMOS]
+    # Create (and optionally launch) the jobs!
     run(args)
