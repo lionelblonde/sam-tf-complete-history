@@ -15,7 +15,7 @@ def test_logger():
     dir = "/tmp/testlogging"
     if osp.exists(dir):
         shutil.rmtree(dir)
-    configure(dir=dir)
+    configure(dir_=dir)
     logkv("a", 3)
     logkv("b", 2.5)
     dumpkvs()

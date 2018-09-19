@@ -7,7 +7,14 @@ https://arxiv.org/abs/1809.02064)
 
 ## How to launch?
 
-Write-up in progress.
+Example: locally launch a PPO expert training job in the environment 'BreakoutNoFrameskip-v4'
+from the [ALE](https://github.com/mgbellemare/Arcade-Learning-Environment).
+* Docker:
+    * CPU only:
+`docker run -i -t --rm docker-rl-tf-cpu:latest bash -c "cd launchers/expert && ./atari_train_ppo_expert.sh 2 BreakoutNoFrameskip-v4"`
+    * GPU support:
+`docker run -i -t --rm docker-rl-tf-gpu:latest bash -c "cd launchers/expert && ./atari_train_ppo_expert.sh 2 BreakoutNoFrameskip-v4"`
+* Non-Docker:
 
 ## TODOs
 

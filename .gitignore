@@ -1,4 +1,4 @@
-# Dotfiles
+# Files
 *.swp
 *.pyc
 *.py~
@@ -11,10 +11,5 @@ CMakeLists.txt
 
 # Folders
 data/
-scripts/
-build/
-imitation/gym/
-imitation/mujoco-py/
-
-# Auxiliary file used as a scratch pad
-imitation/scratchpad.py
+DEMOS/
+MJKEY/
