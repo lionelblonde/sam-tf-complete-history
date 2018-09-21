@@ -1,2 +1,2 @@
 # Run the Python test present in the project
-docker run -it --rm docker-rl-tf-gpu:latest
+docker run -it --rm docker-sam-tf-gpu:latest

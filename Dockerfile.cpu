@@ -98,30 +98,30 @@ RUN pip install \
 RUN pip install --ignore-installed --upgrade https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow-1.10.1-cp36-cp36m-linux_x86_64.whl
 
 # Install gym
-RUN git clone https://github.com/openai/gym.git /opt/gym \
-    && pip install -e '/opt/gym[all]' \
+RUN git clone https://github.com/openai/gym.git /gym \
+    && pip install -e '/gym[all]' \
     && rm -rf ~/.cache/pip
 
 # Install MuJoCo 1.50
-RUN mkdir -p /root/.mujoco \
+RUN mkdir -p /.mujoco \
     && wget https://www.roboti.us/download/mjpro150_linux.zip -O mujoco.zip \
-    && unzip mujoco.zip -d /root/.mujoco \
+    && unzip mujoco.zip -d /.mujoco \
     && rm mujoco.zip
-RUN git clone https://github.com/openai/mujoco-py.git /opt/mujoco-py \
-    && pip install -e /opt/mujoco-py \
+RUN git clone https://github.com/openai/mujoco-py.git /mujoco-py \
+    && pip install -e /mujoco-py \
     && rm -rf ~/.cache/pip
 # Upload MuJoCo licence
-RUN mkdir -p /root/.mujoco/
-RUN ln -s /root/MJKEY/mjkey.txt /root/.mujoco/mjkey.txt
+RUN mkdir -p /.mujoco/ && mkdir -p /MJKEY/
+RUN ln -s /MJKEY/mjkey.txt /.mujoco/mjkey.txt
 # Create environment variables
-ENV MUJOCO_PY_MUJOCO_PATH /root/.mujoco
-ENV MUJOCO_PY_MJPRO_PATH /root/.mujoco/mjpro150
-ENV LD_LIBRARY_PATH /root/.mujoco/mjpro150/bin:${LD_LIBRARY_PATH}
+ENV MUJOCO_PY_MUJOCO_PATH /.mujoco
+ENV MUJOCO_PY_MJPRO_PATH /.mujoco/mjpro150
+ENV LD_LIBRARY_PATH /.mujoco/mjpro150/bin:${LD_LIBRARY_PATH}
 # Make sure 'glfw.py' can load shared lib
-RUN cd /root/.mujoco/mjpro150/bin \
+RUN cd /.mujoco/mjpro150/bin \
     && cp *.so /usr/local/lib/
 
-ENV CODE_DIR /root/code
+ENV CODE_DIR /code
 # Finally, upload the imitation code, launchers and demos!
 # Note that this step is better performed as late as possible
 COPY ./imitation $CODE_DIR/sam-tf/imitation

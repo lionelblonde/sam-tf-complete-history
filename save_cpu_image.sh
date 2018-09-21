@@ -1,2 +1,2 @@
 # Export the built docker image
-docker save -o docker-rl-tf-cpu.tar docker-rl-tf-cpu:latest
+docker save -o docker-sam-tf-cpu.tar docker-sam-tf-cpu:latest

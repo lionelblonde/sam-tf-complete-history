@@ -1,4 +1,4 @@
-# Sample Efficient Imitation Learning
+# SAM: Sample-efficient Adversarial Mimic
 
 Write-up in progress.
 

@@ -1,3 +1,3 @@
-docker run -i -t --rm -v $(pwd)/MJKEY:/root/MJKEY \
-                      -v $(pwd)/DEMOS:/root/DEMOS \
-                      -v $(pwd)/data:/root/code/sam-tf/data docker-rl-tf-gpu:latest bash
+docker run -i -t --rm -v $(pwd)/MJKEY:/MJKEY \
+                      -v $(pwd)/DEMOS:/DEMOS \
+                      -v $(pwd)/data:/code/sam-tf/data docker-sam-tf-gpu:latest bash

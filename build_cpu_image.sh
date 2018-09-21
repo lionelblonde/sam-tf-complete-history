@@ -1,2 +1,2 @@
-# Build docker-rl-tf-cpu image
-docker build --no-cache -f Dockerfile.cpu -t docker-rl-tf-cpu .
+# Build docker image
+docker build --no-cache -f Dockerfile.cpu -t docker-sam-tf-cpu .
