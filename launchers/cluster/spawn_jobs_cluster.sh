@@ -2,6 +2,10 @@
 # Example: ./spawn_jobs_cscs.sh <task> <benchmark> <num_trials> <demos_dir> <num_mpi_workers>
 #                               <call_or_not>
 
+
+# REMOVE THIS SCRIPT
+
+
 cd ../..
 
 python -m imitation.spawners.spawn_jobs_cscs \
