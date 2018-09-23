@@ -110,7 +110,7 @@ RUN mkdir -p /.mujoco \
 RUN git clone https://github.com/openai/mujoco-py.git /mujoco-py \
     && pip install -e /mujoco-py \
     && rm -rf ~/.cache/pip
-# Upload MuJoCo licence
+# Symlink MuJoCo licence
 RUN mkdir -p /.mujoco/ && mkdir -p /MJKEY/
 RUN ln -s /MJKEY/mjkey.txt /.mujoco/mjkey.txt
 # Create environment variables
@@ -127,6 +127,9 @@ ENV CODE_DIR /code
 # Note that this step is better performed as late as possible
 COPY ./imitation $CODE_DIR/sam-tf/imitation
 COPY ./launchers $CODE_DIR/sam-tf/launchers
+# Create empty directories that will be mounted at runtime
+RUN mkdir -p $CODE_DIR/sam-tf/data/
+RUN mkdir -p $CODE_DIR/sam-tf/DEMOS/
 # Define working directory
 WORKDIR $CODE_DIR/sam-tf
 
