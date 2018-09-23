@@ -695,7 +695,10 @@ def format_job_str(args, job_map, run_str):
                                 '#SBATCH --constraint="{}"\n'.format(contraint))
         bash_script_str += ('\n')
         bash_script_str += ('module load GCC/6.3.0-2.27\n'
-                            'module load Singularity/2.4.2\n\n')
+                            'module load Singularity/2.4.2\n')
+        if args.device == 'gpu':
+            bash_script_str += ('module load CUDA')
+        bash_script_str += ('\n')
         if args.mpi:
             bash_script_str += ('mpirun ')
         else:
