@@ -10,6 +10,7 @@
 CMakeLists.txt
 
 # Folders
+tmp/
 data/
 DEMOS/
 MJKEY/
