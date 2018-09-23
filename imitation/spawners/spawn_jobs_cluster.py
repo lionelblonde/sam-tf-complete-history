@@ -754,11 +754,11 @@ def format_exp_str(args, hpmap):
     hpmap_str = unroll_options(hpmap)
     # Parse task name
     if args.task == 'ppo':
-        script = "run_xpo_expert"
+        script = "imitation.expert_algorithms.run_xpo_expert"
     elif args.task == 'gail':
-        script = "run_gail"
+        script = "imitation.imitation_algorithms.run_gail"
     elif args.task == 'sam':
-        script = "run_sam"
+        script = "imitation.imitation_algorithms.run_sam"
 
     pre = ''
 
@@ -773,7 +773,7 @@ def format_exp_str(args, hpmap):
     if args.cluster == 'cscs':
         pre += "cd /code/sam-tf \\\n&& "
 
-    return "{}python -m imitation.imitation_algorithms.{}{}".format(pre, script, hpmap_str)
+    return "{}python -m {}{}".format(pre, script, hpmap_str)
 
 
 def get_job_map(args, idx, env, seed, type_exp):
