@@ -8,9 +8,10 @@
 *.sublime-workspace
 .ipynb_checkpoints
 CMakeLists.txt
+sweep*.sh
+hpsearch*.sh
 
 # Folders
-tmp/
 data/
 DEMOS/
 MJKEY/

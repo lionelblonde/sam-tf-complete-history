@@ -28,8 +28,6 @@ from imitation.common.misc_util import flatten_lists, zipsame, boolean_flag
 
 
 parser = argparse.ArgumentParser(description='SAM Job Orchestrator + HP Search')
-parser.add_argument('--script_dir', type=str, default="scripts/cscs",
-                    help="where to store the generated scripts")
 parser.add_argument('--task', type=str, choices=['ppo', 'gail', 'sam'], default='ppo',
                     help="whether to train an expert with PPO or an imitator with GAIL or SAM")
 parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco',
@@ -38,10 +36,8 @@ parser.add_argument('--cluster', type=str, choices=['baobab', 'cscs'], default='
                     help="cluster on which the experiments will be launched")
 parser.add_argument('--device', type=str, choices=['cpu', 'gpu'], default='gpu',
                     help="type de processing unit to use")
-parser.add_argument('--num_trials', type=int, default=50,
+parser.add_argument('--num_rand_trials', type=int, default=50,
                     help="number of different models to run for the HP search (default: 50)")
-parser.add_argument('--demos_dir', type=str, default=None,
-                    help="location of the expert demos arxivs")
 boolean_flag(parser, 'mpi', default=False, help="whether to use mpi")
 parser.add_argument('--num_workers', type=int, default=1,
                     help="number of parallel mpi workers to use for each job")
@@ -61,6 +57,11 @@ MUJOCO_EXPERT_DEMOS = ['ph',
 ATARI_EXPERT_DEMOS = ['ph',
                       'ph',
                       'ph']  # TODO fill
+# Prepend the full path to the demos arxis
+demos_dir = "/code/sam-tf/DEMOS"
+MUJOCO_EXPERT_DEMOS = [osp.join(demos_dir, arxiv) for arxiv in MUJOCO_EXPERT_DEMOS]
+ATARI_EXPERT_DEMOS = [osp.join(demos_dir, arxiv) for arxiv in ATARI_EXPERT_DEMOS]
+print(MUJOCO_EXPERT_DEMOS)
 # Note 1: the orders must correspond, otherwise `zipsame` will return an error
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
 
@@ -716,7 +717,7 @@ def format_job_str(args, job_map, run_str):
                             '#SBATCH --time={}\n'
                             '#SBATCH --constraint=gpu\n\n')
         bash_script_str += ('module load daint-gpu\n'
-                            'module load shifter-np\n\n')
+                            'module load shifter-ng\n\n')
         bash_script_str += ('srun shifter --debug ')
         if args.mpi:
             bash_script_str += ('--mpi ')
@@ -775,11 +776,7 @@ def format_exp_str(args, hpmap):
     return "{}python -m imitation.imitation_algorithms.{}{}".format(pre, script, hpmap_str)
 
 
-def get_job_map(args, idx, env, seed):
-    if args.rand:
-        type_exp = 'hpsearch'
-    else:
-        type_exp = 'sweep'
+def get_job_map(args, idx, env, seed, type_exp):
     if not args.mpi:
         # Override the number of parallel workers to 1 when mpi is off
         args.num_workers = 1
@@ -791,10 +788,15 @@ def get_job_map(args, idx, env, seed):
 
 def run(args):
     """Spawn jobs"""
+    # Define experiment type
+    if args.rand:
+        type_exp = 'hpsearch'
+    else:
+        type_exp = 'sweep'
     # Get hyperparameter configurations
     if args.rand:
         # Get a number of random hyperparameter configurations
-        hpmaps = [get_rand_hps(args) for _ in range(args.num_trials)]
+        hpmaps = [get_rand_hps(args) for _ in range(args.num_rand_trials)]
         # Flatten into a 1-dim list
         hpmaps = flatten_lists(hpmaps)
     else:
@@ -806,7 +808,7 @@ def run(args):
         # Terminate in case of duplicate experiment (extremely unlikely though)
         raise ValueError("bad luck, there are dupes -> Try again :)")
     # Create the job maps
-    job_maps = [get_job_map(args, i, hpmap['env_id'], hpmap['seed'])
+    job_maps = [get_job_map(args, i, hpmap['env_id'], hpmap['seed'], type_exp)
                 for i, hpmap in enumerate(hpmaps)]
     # Finally get all the required job strings
     job_strs = [format_job_str(args, jm, es) for jm, es in zipsame(job_maps, exp_strs)]
@@ -814,8 +816,8 @@ def run(args):
     for i, js in enumerate(set(job_strs)):
         print('-' * 10 + "> job #{} launcher content:".format(i))
         print(js + "\n")
-        job_name = "hp_search_{}.sh".format(i)
-        with open(osp.join(args.script_dir, job_name), 'w') as f:
+        job_name = "{}{}.sh".format(type_exp, i)
+        with open(job_name, 'w') as f:
             f.write(js)
         if args.call:
             # Spawn the job!
@@ -825,8 +827,5 @@ def run(args):
 
 
 if __name__ == "__main__":
-    # Prepend the full path to the demos arxis
-    MUJOCO_EXPERT_DEMOS = [osp.join(args.demos_dir, arxiv) for arxiv in MUJOCO_EXPERT_DEMOS]
-    ATARI_EXPERT_DEMOS = [osp.join(args.demos_dir, arxiv) for arxiv in ATARI_EXPERT_DEMOS]
     # Create (and optionally launch) the jobs!
     run(args)
