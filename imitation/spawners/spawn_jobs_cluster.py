@@ -66,6 +66,14 @@ print(MUJOCO_EXPERT_DEMOS)
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
 
 
+def absolutify(args, relative_path):
+    """Transform as relative path into an absolute path"""
+    if args.cluster == 'cscs':
+        return osp.join("/code/sam-tf", relative_path)
+    elif args.cluster == 'baobab':
+        return relative_path
+
+
 def dup_hps_for_env(hpmap, env):
     """Return a separate copy of the HP map after adding extra key-value pair
     for the key 'env_id'
@@ -118,9 +126,9 @@ def get_rand_hps(args):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/expert_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 0,
@@ -150,9 +158,9 @@ def get_rand_hps(args):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -190,9 +198,9 @@ def get_rand_hps(args):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -253,9 +261,9 @@ def get_rand_hps(args):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/expert_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 1,
@@ -282,9 +290,9 @@ def get_rand_hps(args):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -316,9 +324,9 @@ def get_rand_hps(args):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, '/data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -390,9 +398,9 @@ def get_spectrum_hps(args, max_seed):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/expert_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 0,
@@ -421,9 +429,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -461,9 +469,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -524,9 +532,9 @@ def get_spectrum_hps(args, max_seed):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/expert_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 1,
@@ -552,9 +560,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -586,9 +594,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': '/code/sam-tf/data/imitation_checkpoints',
-                     'summary_dir': '/code/sam-tf/data/summaries',
-                     'log_dir': '/code/sam-tf/data/logs',
+                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
+                     'summary_dir': absolutify(args, 'data/summaries'),
+                     'log_dir': absolutify(args, 'data/logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -697,7 +705,7 @@ def format_job_str(args, job_map, run_str):
         bash_script_str += ('module load GCC/6.3.0-2.27\n'
                             'module load Singularity/2.4.2\n')
         if args.device == 'gpu':
-            bash_script_str += ('module load CUDA')
+            bash_script_str += ('module load CUDA\n')
         bash_script_str += ('\n')
         if args.mpi:
             bash_script_str += ('mpirun ')
