@@ -300,6 +300,7 @@ def sam_argparser(description="SAM Experiment"):
     parser.add_argument('--clip_norm', type=float, default=None)
     parser.add_argument('--noise_type', help='choices: adaptive-param_xx, normal_xx, ou_xx, none',
                         type=str, default='adaptive-param_0.2, ou_0.1, normal_0.1')
+    parser.add_argument('--rew_aug_coeff', type=float, default=0.)
     parser.add_argument('--param_noise_adaption_frequency', type=float, default=50)
     parser.add_argument('--tau', type=float, default=0.001, help='target networks tracking speed')
     parser.add_argument('--sr_loss_scale', type=float, default=1.)

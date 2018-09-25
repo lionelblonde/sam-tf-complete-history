@@ -11,6 +11,7 @@
         --partition=shared-gpu \
         --time=12:00:00 \
         --max_seed=5 \
+        --docker \
         --no-call \
         --no-rand
 
@@ -25,6 +26,7 @@ from subprocess import call
 from copy import copy
 
 from imitation.common.misc_util import flatten_lists, zipsame, boolean_flag
+from imitation.common.experiment_initializer import rand_id
 
 
 parser = argparse.ArgumentParser(description='SAM Job Orchestrator + HP Search')
@@ -45,13 +47,27 @@ parser.add_argument('--partition', type=str, default=None, help="partition to la
 parser.add_argument('--time', type=str, default=None, help="duration of the jobs")
 parser.add_argument('--max_seed', type=int, default=5,
                     help="amount of seeds across which jobs are replicated ('range(max_seed)'')")
+boolean_flag(parser, 'docker', default=True, help="whether to run through docker containers")
 boolean_flag(parser, 'call', default=False, help="whether to launch the jobs once created")
 boolean_flag(parser, 'rand', default=False, help="whether to perform hyperparameter search")
 args = parser.parse_args()
 
-MUJOCO_ENVS_SET = ['Hopper-v2', 'HalfCheetah-v2', 'Walker2d-v2']
-ATARI_ENVS_SET = ['FrostbiteNoFrameskip-v4', 'BreakoutNoFrameskip-v4', 'SeaquestNoFrameskip-v4']
+NUM_DEMOS_SET = [4, 8, 16]
+MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
+                   'Reacher-v2',
+                   'Hopper-v2',
+                   'HalfCheetah-v2',
+                   'Walker2d-v2',
+                   'Ant-v2',
+                   'Humanoid-v2']
+ATARI_ENVS_SET = ['FrostbiteNoFrameskip-v4',
+                  'BreakoutNoFrameskip-v4',
+                  'SeaquestNoFrameskip-v4']
 MUJOCO_EXPERT_DEMOS = ['ph',
+                       'ph',
+                       'ph',
+                       'ph',
+                       'ph',
                        'ph',
                        'ph']  # TODO fill
 ATARI_EXPERT_DEMOS = ['ph',
@@ -66,11 +82,12 @@ print(MUJOCO_EXPERT_DEMOS)
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
 
 
-def absolutify(args, relative_path):
+def fmt_path(args, meta, dir_):
     """Transform as relative path into an absolute path"""
-    if args.cluster == 'cscs':
+    relative_path = osp.join("data/{}".format(meta), dir_)
+    if args.cluster == 'cscs' and args.docker:
         return osp.join("/code/sam-tf", relative_path)
-    elif args.cluster == 'baobab':
+    else:
         return relative_path
 
 
@@ -102,6 +119,15 @@ def dup_hps_for_seed(hpmap, seed):
     return hpmap_
 
 
+def dup_hps_for_num_demos(hpmap, num_demos):
+    """Return a separate copy of the HP map after adding extra key-value pairs
+    for the key 'num_demos'
+    """
+    hpmap_ = copy(hpmap)
+    hpmap_.update({'num_demos': num_demos})
+    return hpmap_
+
+
 def rand_tuple_from_list(list_):
     """Return a random tuple from a list of tuples
     (Function created because `np.random.choice` does not work on lists of tuples)
@@ -110,7 +136,7 @@ def rand_tuple_from_list(list_):
     return list_[np.random.randint(low=0, high=len(list_))]
 
 
-def get_rand_hps(args):
+def get_rand_hps(args, meta):
     """Return a list of maps of hyperparameters selected by random search
     Example of hyperparameter dictionary:
         {'hid_widths': rand_tuple_from_list([(64, 64)]),  # list of tuples
@@ -126,9 +152,9 @@ def get_rand_hps(args):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 0,
@@ -158,9 +184,9 @@ def get_rand_hps(args):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -198,9 +224,9 @@ def get_rand_hps(args):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -238,6 +264,7 @@ def get_rand_hps(args):
                      'd_lr': 3e-4,
                      'clip_norm': 5.,
                      'noise_type': np.random.choice(['adaptive-param_0.1', 'adaptive-param_0.2']),
+                     'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
                      'mem_size': int(1e5),
@@ -261,9 +288,9 @@ def get_rand_hps(args):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 1,
@@ -290,9 +317,9 @@ def get_rand_hps(args):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -324,9 +351,9 @@ def get_rand_hps(args):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, '/data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -360,6 +387,7 @@ def get_rand_hps(args):
                      'noise_type': np.random.choice(['adaptive-param_0.2',
                                                      'adaptive-param_0.2, ou_0.2',
                                                      'adaptive-param_0.2, ou_0.2, normal_0.2']),
+                     'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
                      'mem_size': int(1e5),
@@ -381,7 +409,7 @@ def get_rand_hps(args):
         raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
 
 
-def get_spectrum_hps(args, max_seed):
+def get_spectrum_hps(args, meta, max_seed):
     """Return a list of maps of hyperparameters selected deterministically
     and spanning the specified range of seeds
     Example of hyperparameter dictionary:
@@ -398,9 +426,9 @@ def get_spectrum_hps(args, max_seed):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 0,
@@ -429,9 +457,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -439,7 +467,6 @@ def get_spectrum_hps(args, max_seed):
                      'timesteps_per_batch': 1024,
                      'batch_size': 64,
                      'sample_or_mode': 1,
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -469,9 +496,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
@@ -481,7 +508,6 @@ def get_spectrum_hps(args, max_seed):
                      'render': 0,
                      'timesteps_per_batch': 16,
                      'batch_size': 32,
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -509,6 +535,7 @@ def get_spectrum_hps(args, max_seed):
                      'd_lr': 3e-4,
                      'clip_norm': 5.,
                      'noise_type': 'adaptive-param_0.2',
+                     'rew_aug_coeff': 0,
                      'param_noise_adaption_frequency': 40,
                      'gamma': 0.99,
                      'mem_size': int(1e5),
@@ -532,9 +559,9 @@ def get_spectrum_hps(args, max_seed):
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/expert_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'train_xpo_expert',
                      'algo': 'ppo',
                      'rmsify_obs': 1,
@@ -560,9 +587,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -570,7 +597,6 @@ def get_spectrum_hps(args, max_seed):
                      'timesteps_per_batch': 1024,
                      'batch_size': 64,
                      'sample_or_mode': 1,
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -594,9 +620,9 @@ def get_spectrum_hps(args, max_seed):
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
                      'seed': 0,
-                     'checkpoint_dir': absolutify(args, 'data/imitation_checkpoints'),
-                     'summary_dir': absolutify(args, 'data/summaries'),
-                     'log_dir': absolutify(args, 'data/logs'),
+                     'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
+                     'summary_dir': fmt_path(args, meta, 'summaries'),
+                     'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
@@ -606,7 +632,6 @@ def get_spectrum_hps(args, max_seed):
                      'render': 0,
                      'timesteps_per_batch': 16,
                      'batch_size': 32,
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -628,6 +653,7 @@ def get_spectrum_hps(args, max_seed):
                      'd_lr': 3e-4,
                      'clip_norm': 5.,
                      'noise_type': 'adaptive-param_0.2, ou_0.2',
+                     'rew_aug_coeff': 0,
                      'param_noise_adaption_frequency': 40,
                      'gamma': 0.99,
                      'mem_size': int(1e5),
@@ -648,10 +674,16 @@ def get_spectrum_hps(args, max_seed):
     else:
         raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
 
-    # Duplicate every hyperparameter map of the list to spawn the range of seeds
-    return [dup_hps_for_seed(hpmap, seed)
-            for seed in range(max_seed)
-            for hpmap in hpmaps]
+    # Duplicate every hyperparameter map of the list to span the range of seeds
+    output = [dup_hps_for_seed(hpmap, seed)
+              for seed in range(max_seed)
+              for hpmap in hpmaps]
+    if args.task in ['gail', 'sam']:
+        # Duplicate every hyperparameter map of the list to span the range of num of demos
+        output = [dup_hps_for_num_demos(hpmap, num_demos)
+                  for num_demos in NUM_DEMOS_SET
+                  for hpmap in output]
+    return output
 
 
 def unroll_options(hpmap):
@@ -689,7 +721,16 @@ def unroll_options(hpmap):
 
 def format_job_str(args, job_map, run_str):
     """Build the batch script that launches a job"""
+    message = "MuJoCo bugged for Singularity/Shifter (looks for bins + license in host's ~) "
+    message += "-> https://github.com/openai/mujoco-py/issues/295"
+    assert not (args.benchmark == 'mujoco' and args.docker), message
+    message = "MPICH install in container, necessary for inter-container comm "
+    message += "in Singularity/Shifter, breaks mpi4py in the python code. "
+    message += "PITA to solve, for little gains: inter-container MPI comms not supported. "
+    assert not (args.mpi and args.docker), message
     if args.cluster == 'baobab':
+        assert args.docker, "Baobab's everything is old. Docker usage forced."
+        # Set sbatch config
         bash_script_str = ('#!/usr/bin/env bash\n\n')
         bash_script_str += ('#SBATCH --job-name={}\n'
                             '#SBATCH --partition={}\n'
@@ -702,11 +743,13 @@ def format_job_str(args, job_map, run_str):
             bash_script_str += ('#SBATCH --gres=gpu:1\n'
                                 '#SBATCH --constraint="{}"\n'.format(contraint))
         bash_script_str += ('\n')
+        # Load modules
         bash_script_str += ('module load GCC/6.3.0-2.27\n'
                             'module load Singularity/2.4.2\n')
         if args.device == 'gpu':
             bash_script_str += ('module load CUDA\n')
         bash_script_str += ('\n')
+        # Launch command
         if args.mpi:
             bash_script_str += ('mpirun ')
         else:
@@ -717,9 +760,10 @@ def format_job_str(args, job_map, run_str):
             bash_script_str += ('/home/blonde0/docker_images/docker-sam-tf-gpu ')
         elif args.device == 'cpu':
             bash_script_str += ('/home/blonde0/docker_images/docker-sam-tf-cpu ')
-        bash_script_str += ('bash -c "{}"')
+        bash_script_str += ('{}')
 
-    if args.cluster == 'cscs':
+    elif args.cluster == 'cscs':
+        # Set sbatch config
         bash_script_str = ('#!/usr/bin/env bash\n\n')
         bash_script_str += ('#SBATCH --job-name={}\n'
                             '#SBATCH --partition={}\n'
@@ -727,31 +771,47 @@ def format_job_str(args, job_map, run_str):
                             '#SBATCH --cpus-per-task=1\n'
                             '#SBATCH --time={}\n'
                             '#SBATCH --constraint=gpu\n\n')
-        bash_script_str += ('module load daint-gpu\n'
-                            'module load shifter-ng\n\n')
-        bash_script_str += ('srun shifter --debug ')
-        if args.mpi:
-            bash_script_str += ('--mpi ')
-        bash_script_str += ('run '
-                            '--writable-volatile=/code ')
-        bash_script_str += ('--mount='
-                            'type=bind,'
-                            'source=/users/lblonde/Code/seil-tf/data,'
-                            'destination=/code/sam-tf/data ')
-        bash_script_str += ('--mount='
-                            'type=bind,'
-                            'source=/users/lblonde/Code/seil-tf/DEMOS,'
-                            'destination=/code/sam-tf/DEMOS ')
-        if args.benchmark == 'mujoco':
+        # Load modules
+        bash_script_str += ('module load daint-gpu\n')
+        if args.docker:
+            bash_script_str += ('module load shifter-ng\n')
+        bash_script_str += ('\n')
+        # Launch command
+        if args.docker:
+            bash_script_str += ('srun shifter --debug ')
+            if args.mpi:
+
+                bash_script_str += ('--mpi ')
+            bash_script_str += ('run ')
             bash_script_str += ('--mount='
                                 'type=bind,'
-                                'source=/users/lblonde/.mujoco,'
-                                'destination=/users/lblonde/.mujoco ')
-        if args.device == 'gpu':
-            bash_script_str += ('lionelblonde/docker-sam-tf-gpu:latest ')
-        elif args.device == 'cpu':
-            bash_script_str += ('lionelblonde/docker-sam-tf-cpu:latest ')
-        bash_script_str += ('bash -c "{}"')
+                                'source=/users/lblonde/Code/seil-tf/imitation,'
+                                'destination=/code/sam-tf/imitation ')
+            bash_script_str += ('--mount='
+                                'type=bind,'
+                                'source=/users/lblonde/Code/seil-tf/launchers,'
+                                'destination=/code/sam-tf/launchers ')
+            bash_script_str += ('--mount='
+                                'type=bind,'
+                                'source=/users/lblonde/Code/seil-tf/data,'
+                                'destination=/code/sam-tf/data ')
+            bash_script_str += ('--mount='
+                                'type=bind,'
+                                'source=/users/lblonde/Code/seil-tf/DEMOS,'
+                                'destination=/code/sam-tf/DEMOS ')
+            if args.device == 'gpu':
+                bash_script_str += ('lionelblonde/docker-sam-tf-gpu:latest ')
+            elif args.device == 'cpu':
+                bash_script_str += ('lionelblonde/docker-sam-tf-cpu:latest ')
+            bash_script_str += ('bash -c "{}"')
+        else:
+            assert args.benchmark == 'mujoco', "Can only go the non-docker way with MuJoCo."
+            assert args.device == 'cpu', "Continuous control always faster on CPU. \
+                                          GPU usage prevented."
+            if args.mpi:
+                bash_script_str += ('mpirun {}')
+            else:
+                bash_script_str += ('srun {}')
 
     return bash_script_str.format(job_map['job-name'],
                                   job_map['partition'],
@@ -771,34 +831,31 @@ def format_exp_str(args, hpmap):
     elif args.task == 'sam':
         script = "imitation.imitation_algorithms.run_sam"
 
-    pre = ''
-
-    if args.benchmark == 'mujoco':
-        if args.cluster == 'cscs':
-            pre += ('export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:'
-                    '/users/lblonde/.mujoco/mjpro150/bin \\\n&& ')
-        elif args.cluster == 'baobab':
-            pre += ('export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:'
-                    '/home/blonde0/.mujoco/mjpro150/bin \\\n&& ')
-
-    if args.cluster == 'cscs':
-        pre += "cd /code/sam-tf \\\n&& "
+    pre = "cd /code/sam-tf && " if args.cluster == 'cscs' and args.docker else ''
 
     return "{}python -m {}{}".format(pre, script, hpmap_str)
 
 
-def get_job_map(args, idx, env, seed, type_exp):
+def get_job_map(args, meta, i, env, seed, num_demos, type_exp):
     if not args.mpi:
         # Override the number of parallel workers to 1 when mpi is off
         args.num_workers = 1
     return {'ntasks': args.num_workers,
             'partition': args.partition,
             'time': args.time,
-            'job-name': "{}{}_{}_{}_{}".format(type_exp, idx, args.task, env.split('-')[0], seed)}
+            'job-name': "{}_{}{}_{}_{}_s{}_d{}".format(meta,
+                                                       type_exp,
+                                                       i,
+                                                       args.task,
+                                                       env.split('-')[0],
+                                                       seed,
+                                                       num_demos)}
 
 
 def run(args):
     """Spawn jobs"""
+    # Create meta-experiment identifier
+    meta = rand_id()
     # Define experiment type
     if args.rand:
         type_exp = 'hpsearch'
@@ -807,19 +864,25 @@ def run(args):
     # Get hyperparameter configurations
     if args.rand:
         # Get a number of random hyperparameter configurations
-        hpmaps = [get_rand_hps(args) for _ in range(args.num_rand_trials)]
+        hpmaps = [get_rand_hps(args, meta) for _ in range(args.num_rand_trials)]
         # Flatten into a 1-dim list
         hpmaps = flatten_lists(hpmaps)
     else:
         # Get the deterministic spectrum of specified hyperparameters
-        hpmaps = get_spectrum_hps(args, args.max_seed)
+        hpmaps = get_spectrum_hps(args, meta, args.max_seed)
     # Create associated task strings
     exp_strs = [format_exp_str(args, hpmap) for hpmap in hpmaps]
     if not len(exp_strs) == len(set(exp_strs)):
         # Terminate in case of duplicate experiment (extremely unlikely though)
         raise ValueError("bad luck, there are dupes -> Try again :)")
     # Create the job maps
-    job_maps = [get_job_map(args, i, hpmap['env_id'], hpmap['seed'], type_exp)
+    job_maps = [get_job_map(args,
+                            meta,
+                            i,
+                            hpmap['env_id'],
+                            hpmap['seed'],
+                            '0' if args.task == 'ppo' else hpmap['num_demos'],
+                            type_exp)
                 for i, hpmap in enumerate(hpmaps)]
     # Finally get all the required job strings
     job_strs = [format_job_str(args, jm, es) for jm, es in zipsame(job_maps, exp_strs)]

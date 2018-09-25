@@ -3,7 +3,7 @@
 
 cd ../..
 
-mpirun --allow-run-as-root -np $1 python -m imitation.imitation_algorithms.run_gail \
+mpirun -np $1 python -m imitation.imitation_algorithms.run_gail \
     --note="" \
     --env_id=$2 \
     --from_raw_pixels \

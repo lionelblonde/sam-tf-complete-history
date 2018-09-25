@@ -3,7 +3,7 @@
 
 cd ../..
 
-mpirun --allow-run-as-root -np $1 python -m imitation.expert_algorithms.run_xpo_expert \
+mpirun -np $1 python -m imitation.expert_algorithms.run_xpo_expert \
     --note="" \
     --env_id=$2 \
     --no-from_raw_pixels \

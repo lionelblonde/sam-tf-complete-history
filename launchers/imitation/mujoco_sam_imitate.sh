@@ -3,7 +3,7 @@
 
 cd ../..
 
-mpirun --allow-run-as-root -np $1 python -m imitation.imitation_algorithms.run_sam \
+mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --note="" \
     --env_id=$2 \
     --no-from_raw_pixels \
@@ -43,6 +43,7 @@ mpirun --allow-run-as-root -np $1 python -m imitation.imitation_algorithms.run_s
     --d_lr=3e-4 \
     --clip_norm=5. \
     --noise_type="adaptive-param_0.2, ou_0.2" \
+    --rew_aug_coeff=0. \
     --param_noise_adaption_frequency=40 \
     --gamma=0.99 \
     --mem_size=100000 \

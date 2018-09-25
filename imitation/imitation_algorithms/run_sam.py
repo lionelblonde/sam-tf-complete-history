@@ -66,6 +66,7 @@ def imitate_via_sam(args):
               add_demos_to_mem=args.add_demos_to_mem,
               save_frequency=args.save_frequency,
               d_lr=args.d_lr,
+              rew_aug_coeff=args.rew_aug_coeff,
               param_noise_adaption_frequency=args.param_noise_adaption_frequency,
               timesteps_per_batch=args.timesteps_per_batch,
               batch_size=args.batch_size,

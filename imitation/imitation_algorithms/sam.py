@@ -18,7 +18,7 @@ from imitation.common.summary_util import CustomSummary
 from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce, mpi_moments
 
 
-def traj_segment_generator(env, mu, d, timesteps_per_batch, comm):
+def traj_segment_generator(env, mu, d, timesteps_per_batch, comm, rew_aug_coeff):
     t = 0
     ac = env.action_space.sample()
     done = True
@@ -67,7 +67,8 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, comm):
         cur_ep_len += 1
         cur_ep_syn_ret += syn_rew
         cur_ep_env_ret += env_rew
-        mu.store_transition(ob, ac, syn_rew, new_ob, done, comm)
+        stored_rew = syn_rew + (rew_aug_coeff * env_rew)
+        mu.store_transition(ob, ac, stored_rew, new_ob, done, comm)
         ob = copy.copy(new_ob)
         if done:
             ep_lens.append(cur_ep_len)
@@ -198,6 +199,7 @@ def learn(comm,
           add_demos_to_mem,
           save_frequency,
           d_lr,
+          rew_aug_coeff,
           param_noise_adaption_frequency,
           timesteps_per_batch,
           batch_size,
@@ -255,7 +257,8 @@ def learn(comm,
         assert _ac_.shape == ac_scale.shape  # gym sanity check
 
     # Create segment generator for training the agent
-    seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch, comm)
+    assert 0 <= rew_aug_coeff <= 1
+    seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch, comm, rew_aug_coeff)
     if eval_env is not None:
         # Create episode generator for evaluating the agent
         eval_ep_gen = traj_ep_generator(eval_env, mu, d, render)
