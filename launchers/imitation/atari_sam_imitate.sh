@@ -14,7 +14,7 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --task="imitate_via_sam" \
     --expert_path=$3 \
     --no-rmsify_obs \
-    --save_frequency=100 \
+    --save_frequency=10 \
     --num_timesteps=10000000 \
     --training_steps_per_iter=20 \
     --eval_steps_per_iter=10 \

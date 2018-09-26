@@ -14,7 +14,7 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_gail \
     --task="imitate_via_gail" \
     --expert_path=$3 \
     --no-rmsify_obs \
-    --save_frequency=100 \
+    --save_frequency=10 \
     --num_timesteps=10000000 \
     --timesteps_per_batch=1024 \
     --batch_size=64 \

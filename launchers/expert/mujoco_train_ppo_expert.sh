@@ -14,7 +14,7 @@ mpirun -np $1 python -m imitation.expert_algorithms.run_xpo_expert \
     --task="train_xpo_expert" \
     --algo="ppo" \
     --rmsify_obs \
-    --save_frequency=100 \
+    --save_frequency=10 \
     --num_timesteps=10000000 \
     --timesteps_per_batch=2048 \
     --batch_size=64 \
