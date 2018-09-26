@@ -63,21 +63,16 @@ MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
 ATARI_ENVS_SET = ['FrostbiteNoFrameskip-v4',
                   'BreakoutNoFrameskip-v4',
                   'SeaquestNoFrameskip-v4']
-MUJOCO_EXPERT_DEMOS = ['ph',
-                       'ph',
-                       'ph',
-                       'ph',
-                       'ph',
-                       'ph',
-                       'ph']  # TODO fill
+MUJOCO_EXPERT_DEMOS = ['InvertedPendulum-v2_s0_mode_d32.npz',
+                       'Reacher-v2_s0_mode_d32.npz',
+                       'Hopper-v2_s0_mode_d32.npz',
+                       'HalfCheetah-v2_s0_mode_d32.npz',
+                       'Walker2d-v2_s0_mode_d32.npz',
+                       'Ant-v2_s0_mode_d32.npz',
+                       'Humanoid-v2_s0_mode_d32.npz']
 ATARI_EXPERT_DEMOS = ['ph',
                       'ph',
                       'ph']  # TODO fill
-# Prepend the full path to the demos arxis
-demos_dir = "/code/sam-tf/DEMOS"
-MUJOCO_EXPERT_DEMOS = [osp.join(demos_dir, arxiv) for arxiv in MUJOCO_EXPERT_DEMOS]
-ATARI_EXPERT_DEMOS = [osp.join(demos_dir, arxiv) for arxiv in ATARI_EXPERT_DEMOS]
-print(MUJOCO_EXPERT_DEMOS)
 # Note 1: the orders must correspond, otherwise `zipsame` will return an error
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
 
@@ -100,10 +95,14 @@ def dup_hps_for_env(hpmap, env):
     return hpmap_
 
 
-def dup_hps_for_env_w_demos(hpmap, env, demos):
+def dup_hps_for_env_w_demos(args, hpmap, env, demos):
     """Return a separate copy of the HP map after adding extra key-value pairs
     for the keys 'env_id' and 'expert_path'
     """
+    demos = osp.join("DEMOS", demos)
+    if args.cluster == 'cscs' and args.docker:
+        # Prepend full container path to the demos arxis
+        demos = osp.join("/code/sam-tf", demos)
     hpmap_ = copy(hpmap)
     hpmap_.update({'env_id': env})
     hpmap_.update({'expert_path': demos})
@@ -219,7 +218,7 @@ def get_rand_hps(args, meta):
                      'd_lr': 3e-4,
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
-            return [dup_hps_for_env_w_demos(hpmap, env, demos)
+            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                     for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
@@ -280,7 +279,7 @@ def get_rand_hps(args, meta):
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
                      'n': np.random.choice([10, 20, 40, 60])}
-            return [dup_hps_for_env_w_demos(hpmap, env, demos)
+            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                     for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
     # MuJoCo
     elif args.benchmark == 'mujoco':
@@ -346,7 +345,7 @@ def get_rand_hps(args, meta):
                      'd_lr': 3e-4,
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
-            return [dup_hps_for_env_w_demos(hpmap, env, demos)
+            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                     for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
@@ -403,7 +402,7 @@ def get_rand_hps(args, meta):
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
                      'n': np.random.choice([10, 20, 40, 60])}
-            return [dup_hps_for_env_w_demos(hpmap, env, demos)
+            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                     for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
         raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
@@ -491,7 +490,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'd_lr': 3e-4,
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
-            hpmaps = [dup_hps_for_env_w_demos(hpmap, env, demos)
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                       for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
@@ -551,7 +550,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'wd_scale': 0.001,
                      'n_step_returns': 1,
                      'n': 60}
-            hpmaps = [dup_hps_for_env_w_demos(hpmap, env, demos)
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                       for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
     # MuJoCo
     elif args.benchmark == 'mujoco':
@@ -615,7 +614,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'd_lr': 3e-4,
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
-            hpmaps = [dup_hps_for_env_w_demos(hpmap, env, demos)
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                       for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
@@ -669,7 +668,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'wd_scale': 0.001,
                      'n_step_returns': 1,
                      'n': 60}
-            hpmaps = [dup_hps_for_env_w_demos(hpmap, env, demos)
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                       for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
         raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")

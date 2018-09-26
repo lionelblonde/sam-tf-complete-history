@@ -10,6 +10,7 @@
 CMakeLists.txt
 sweep*.sh
 hpsearch*.sh
+slurm-*.out
 
 # Folders
 data/
