@@ -70,9 +70,9 @@ MUJOCO_EXPERT_DEMOS = ['InvertedPendulum-v2_s0_mode_d32.npz',
                        'Walker2d-v2_s0_mode_d32.npz',
                        'Ant-v2_s0_mode_d32.npz',
                        'Humanoid-v2_s0_mode_d32.npz']
-ATARI_EXPERT_DEMOS = ['ph',
-                      'ph',
-                      'ph']  # TODO fill
+ATARI_EXPERT_DEMOS = ['FrostbiteNoFrameskip-v4_s0_mode_d32.npz',
+                      'BreakoutNoFrameskip-v4_s0_mode_d32.npz',
+                      'SeaquestNoFrameskip-v4_s0_mode_d32.npz']
 # Note 1: the orders must correspond, otherwise `zipsame` will return an error
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
 
