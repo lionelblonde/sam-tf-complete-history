@@ -70,7 +70,6 @@ def xpo_expert_argparser(description="XPO Expert Experiment"):
     """Create an argparse.ArgumentParser for XPO-expert-related tasks"""
     parser = argparse(description)
     parser.add_argument('--note', help='w/e', type=str, default=None)
-    parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco')
     parser.add_argument('--env_id', help='environment identifier', default='Hopper-v2')
     boolean_flag(parser, 'from_raw_pixels', default=False)
     parser.add_argument('--horizon', help='maximum number of timesteps in an episode',
@@ -144,7 +143,6 @@ def gail_argparser(description="GAIL Experiment"):
     """Create an argparse.ArgumentParser for GAIL-related tasks"""
     parser = argparse(description)
     parser.add_argument('--note', help='w/e note', type=str, default=None)
-    parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco')
     parser.add_argument('--env_id', help='environment identifier', default='Hopper-v2')
     boolean_flag(parser, 'from_raw_pixels', default=False)
     parser.add_argument('--horizon', help='maximum number of timesteps in an episode',
@@ -215,11 +213,6 @@ def gail_argparser(description="GAIL Experiment"):
     boolean_flag(parser, 'one_sided_label_smoothing', default=True)
     parser.add_argument('--gamma', help='discount factor', type=float, default=0.995)
     parser.add_argument('--gae_lambda', help='gae lamdba parameter', type=float, default=0.97)
-    boolean_flag(parser, 'pretrain', default=False, help='whether to pretrain via BC')
-    parser.add_argument('--pretrained_model_path', help='path of the pretrained model',
-                        type=str, default=None)
-    parser.add_argument('--num_bc_iters', help='max iteration for BC pretraining',
-                        type=int, default=1e4)
     return parser
 
 
@@ -227,7 +220,6 @@ def sam_argparser(description="SAM Experiment"):
     """Create an argparse.ArgumentParser for SAM-related tasks"""
     parser = argparse(description)
     parser.add_argument('--note', help='w/e note', type=str, default=None)
-    parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco')
     parser.add_argument('--env_id', help='environment identifier', default='Hopper-v2')
     boolean_flag(parser, 'from_raw_pixels', default=False)
     parser.add_argument('--horizon', help='maximum number of timesteps in an episode',
@@ -312,10 +304,4 @@ def sam_argparser(description="SAM Experiment"):
     parser.add_argument('--n', help='number of steps for the TD lookahead', type=int, default=10)
     parser.add_argument('--training_steps_per_iter', type=int, default=50)
     parser.add_argument('--eval_steps_per_iter', type=int, default=100)
-    boolean_flag(parser, 'pretrain', default=False, help='whether to pretrain via BC')
-    parser.add_argument('--pretrained_model_path', help='path of the pretrained model',
-                        type=str, default=None)
-    parser.add_argument('--num_bc_iters', help='max iteration for BC pretraining',
-                        type=int, default=1e4)
-
     return parser

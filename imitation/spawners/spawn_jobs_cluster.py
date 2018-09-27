@@ -60,9 +60,7 @@ MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
                    'Walker2d-v2',
                    'Ant-v2',
                    'Humanoid-v2']
-ATARI_ENVS_SET = ['FrostbiteNoFrameskip-v4',
-                  'BreakoutNoFrameskip-v4',
-                  'SeaquestNoFrameskip-v4']
+ATARI_ENVS_SET = ['BreakoutNoFrameskip-v4']
 MUJOCO_EXPERT_DEMOS = ['InvertedPendulum-v2_s0_mode_d32.npz',
                        'Reacher-v2_s0_mode_d32.npz',
                        'Hopper-v2_s0_mode_d32.npz',
@@ -70,9 +68,7 @@ MUJOCO_EXPERT_DEMOS = ['InvertedPendulum-v2_s0_mode_d32.npz',
                        'Walker2d-v2_s0_mode_d32.npz',
                        'Ant-v2_s0_mode_d32.npz',
                        'Humanoid-v2_s0_mode_d32.npz']
-ATARI_EXPERT_DEMOS = ['FrostbiteNoFrameskip-v4_s0_mode_d32.npz',
-                      'BreakoutNoFrameskip-v4_s0_mode_d32.npz',
-                      'SeaquestNoFrameskip-v4_s0_mode_d32.npz']
+ATARI_EXPERT_DEMOS = ['BreakoutNoFrameskip-v4_s0_mode_d32.npz']
 # Note 1: the orders must correspond, otherwise `zipsame` will return an error
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
 
@@ -506,7 +502,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
-                     'batch_size': 32,
+                     'batch_size': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -532,8 +528,8 @@ def get_spectrum_hps(args, meta, max_seed):
                      'actor_lr': 1e-4,
                      'critic_lr': 1e-3,
                      'd_lr': 3e-4,
-                     'clip_norm': 5.,
-                     'noise_type': 'adaptive-param_0.2',
+                     'clip_norm': 40.,
+                     'noise_type': 'adaptive-param_0.4',
                      'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
                      'gamma': 0.99,
