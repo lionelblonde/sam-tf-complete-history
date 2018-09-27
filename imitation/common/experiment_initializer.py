@@ -83,8 +83,6 @@ class ExperimentInitializer:
         if self.args.task in ['imitate_via_gail', 'imitate_via_sam']:
             if self.args.task in ['imitate_via_gail', 'imitate_via_sam']:
                 name += "{}.".format(self.args.task)
-                if self.args.pretrain:
-                    name += "w_bc_pretraining.num_bc_iters_{}".format(self.args.num_bc_iters)
             else:
                 name += "{}.max_iters_{}.".format(self.args.task, self.args.max_iters)
             # common to 'imitate' and 'clone'
