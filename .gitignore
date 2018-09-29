@@ -8,8 +8,8 @@
 *.sublime-workspace
 .ipynb_checkpoints
 CMakeLists.txt
-sweep*.sh
-hpsearch*.sh
+*sweep*.sh
+*hpsearch*.sh
 slurm-*.out
 
 # Folders

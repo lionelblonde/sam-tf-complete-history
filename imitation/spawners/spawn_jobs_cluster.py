@@ -34,7 +34,7 @@ parser.add_argument('--task', type=str, choices=['ppo', 'gail', 'sam'], default=
                     help="whether to train an expert with PPO or an imitator with GAIL or SAM")
 parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco',
                     help="benchmark on which to run experiments")
-parser.add_argument('--cluster', type=str, choices=['baobab', 'cscs'], default='baobab',
+parser.add_argument('--cluster', type=str, choices=['baobab', 'cscs', 'gengar'], default='gengar',
                     help="cluster on which the experiments will be launched")
 parser.add_argument('--device', type=str, choices=['cpu', 'gpu'], default='gpu',
                     help="type de processing unit to use")
@@ -42,7 +42,7 @@ parser.add_argument('--num_rand_trials', type=int, default=50,
                     help="number of different models to run for the HP search (default: 50)")
 boolean_flag(parser, 'mpi', default=False, help="whether to use mpi")
 parser.add_argument('--num_workers', type=int, default=1,
-                    help="number of parallel mpi workers to use for each job")
+                    help="number of parallel mpi workers (actors) to use for each job")
 parser.add_argument('--partition', type=str, default=None, help="partition to launch jobs on")
 parser.add_argument('--time', type=str, default=None, help="duration of the jobs")
 parser.add_argument('--max_seed', type=int, default=5,
@@ -54,20 +54,20 @@ args = parser.parse_args()
 
 NUM_DEMOS_SET = [4, 8, 16]
 MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
+                   'InvertedDoublePendulum-v2',
                    'Reacher-v2',
                    'Hopper-v2',
                    'HalfCheetah-v2',
                    'Walker2d-v2',
-                   'Ant-v2',
-                   'Humanoid-v2']
+                   'Ant-v2']
 ATARI_ENVS_SET = ['BreakoutNoFrameskip-v4']
 MUJOCO_EXPERT_DEMOS = ['InvertedPendulum-v2_s0_mode_d32.npz',
+                       'InvertedDoublePendulum-v2_s0_mode_d32.npz',
                        'Reacher-v2_s0_mode_d32.npz',
                        'Hopper-v2_s0_mode_d32.npz',
                        'HalfCheetah-v2_s0_mode_d32.npz',
                        'Walker2d-v2_s0_mode_d32.npz',
-                       'Ant-v2_s0_mode_d32.npz',
-                       'Humanoid-v2_s0_mode_d32.npz']
+                       'Ant-v2_s0_mode_d32.npz']
 ATARI_EXPERT_DEMOS = ['BreakoutNoFrameskip-v4_s0_mode_d32.npz']
 # Note 1: the orders must correspond, otherwise `zipsame` will return an error
 # Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
@@ -379,9 +379,9 @@ def get_rand_hps(args, meta):
                      'critic_lr': 1e-3,
                      'd_lr': 3e-4,
                      'clip_norm': 5.,
-                     'noise_type': np.random.choice(['adaptive-param_0.2',
-                                                     'adaptive-param_0.2, ou_0.2',
-                                                     'adaptive-param_0.2, ou_0.2, normal_0.2']),
+                     'noise_type': np.random.choice(['"adaptive-param_0.2"',
+                                                     '"adaptive-param_0.2, ou_0.2"',
+                                                     '"adaptive-param_0.2, ou_0.2, normal_0.2"']),
                      'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
@@ -647,7 +647,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'critic_lr': 1e-3,
                      'd_lr': 3e-4,
                      'clip_norm': 5.,
-                     'noise_type': 'adaptive-param_0.2, ou_0.2',
+                     'noise_type': '"adaptive-param_0.2, ou_0.2"',
                      'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
                      'gamma': 0.99,
@@ -757,6 +757,12 @@ def format_job_str(args, job_map, run_str):
             bash_script_str += ('/home/blonde0/docker_images/docker-sam-tf-cpu ')
         bash_script_str += ('{}')
 
+        return bash_script_str.format(job_map['job-name'],
+                                      job_map['partition'],
+                                      job_map['ntasks'],
+                                      job_map['time'],
+                                      run_str)
+
     elif args.cluster == 'cscs':
         # Set sbatch config
         bash_script_str = ('#!/usr/bin/env bash\n\n')
@@ -808,11 +814,21 @@ def format_job_str(args, job_map, run_str):
             else:
                 bash_script_str += ('srun {}')
 
-    return bash_script_str.format(job_map['job-name'],
-                                  job_map['partition'],
-                                  job_map['ntasks'],
-                                  job_map['time'],
-                                  run_str)
+        return bash_script_str.format(job_map['job-name'],
+                                      job_map['partition'],
+                                      job_map['ntasks'],
+                                      job_map['time'],
+                                      run_str)
+
+    elif args.cluster == 'gengar':
+        # Set header
+        bash_script_str = ('#!/usr/bin/env bash\n\n')
+        bash_script_str += ('# job name: {}\n\n')
+        # Launch command
+        bash_script_str += ('mpirun -np {} {}')
+        return bash_script_str.format(job_map['job-name'],
+                                      job_map['ntasks'],
+                                      run_str)
 
 
 def format_exp_str(args, hpmap):
@@ -882,10 +898,10 @@ def run(args):
     # Finally get all the required job strings
     job_strs = [format_job_str(args, jm, es) for jm, es in zipsame(job_maps, exp_strs)]
     # Spawn the jobs
-    for i, js in enumerate(set(job_strs)):
+    for i, (jm, js) in enumerate(zipsame(job_maps, job_strs)):
         print('-' * 10 + "> job #{} launcher content:".format(i))
         print(js + "\n")
-        job_name = "{}{}.sh".format(type_exp, i)
+        job_name = "{}.sh".format(jm['job-name'])
         with open(job_name, 'w') as f:
             f.write(js)
         if args.call:
