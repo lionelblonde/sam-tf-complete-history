@@ -184,7 +184,7 @@ def get_rand_hps(args, meta):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
                      'batch_size': 64,
@@ -224,7 +224,7 @@ def get_rand_hps(args, meta):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'training_steps_per_iter': np.random.choice([2, 4, 8, 16, 32]),
                      'eval_steps_per_iter': 10,
@@ -317,7 +317,7 @@ def get_rand_hps(args, meta):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
                      'batch_size': 64,
@@ -351,7 +351,7 @@ def get_rand_hps(args, meta):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'training_steps_per_iter': np.random.choice([2, 4, 8, 16, 32]),
                      'eval_steps_per_iter': 10,
@@ -457,7 +457,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
                      'batch_size': 64,
@@ -496,7 +496,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'training_steps_per_iter': 20,
                      'eval_steps_per_iter': 10,
@@ -528,7 +528,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'actor_lr': 1e-4,
                      'critic_lr': 1e-3,
                      'd_lr': 3e-4,
-                     'clip_norm': 40.,
+                     'clip_norm': 5.,
                      'noise_type': 'adaptive-param_0.4',
                      'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
@@ -545,7 +545,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'td_loss_n_scale': 1.,
                      'wd_scale': 0.001,
                      'n_step_returns': 1,
-                     'n': 60}
+                     'n': 96}
             hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                       for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
     # MuJoCo
@@ -587,7 +587,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
                      'batch_size': 64,
@@ -620,7 +620,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
-                     'save_frequency': 10,
+                     'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'training_steps_per_iter': 20,
                      'eval_steps_per_iter': 10,
@@ -663,7 +663,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'td_loss_n_scale': 1.,
                      'wd_scale': 0.001,
                      'n_step_returns': 1,
-                     'n': 60}
+                     'n': 96}
             hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                       for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
