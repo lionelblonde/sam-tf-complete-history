@@ -52,7 +52,7 @@ boolean_flag(parser, 'call', default=False, help="whether to launch the jobs onc
 boolean_flag(parser, 'rand', default=False, help="whether to perform hyperparameter search")
 args = parser.parse_args()
 
-NUM_DEMOS_SET = [4, 8, 16]
+NUM_DEMOS_SET = [4, 16, 32]
 MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
                    'InvertedDoublePendulum-v2',
                    'Reacher-v2',
@@ -187,7 +187,7 @@ def get_rand_hps(args, meta):
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
-                     'batch_size': 64,
+                     'batch_size': 128,
                      'sample_or_mode': 1,
                      'num_demos': 16,
                      'g_steps': 3,
@@ -320,7 +320,7 @@ def get_rand_hps(args, meta):
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
-                     'batch_size': 64,
+                     'batch_size': 128,
                      'sample_or_mode': 1,
                      'num_demos': 16,
                      'g_steps': 3,
