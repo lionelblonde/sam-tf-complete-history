@@ -1,0 +1,20 @@
+# Dotfiles
+*.swp
+*.pyc
+*.py~
+.DS_Store
+.idea
+*.sublime-project
+*.sublime-workspace
+.ipynb_checkpoints
+CMakeLists.txt
+
+# Folders
+data/
+scripts/
+build/
+imitation/gym/
+imitation/mujoco-py/
+
+# Auxiliary file used as a scratch pad
+imitation/scratchpad.py
