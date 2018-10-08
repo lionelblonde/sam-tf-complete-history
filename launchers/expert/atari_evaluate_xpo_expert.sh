@@ -5,7 +5,7 @@ cd ../..
 
 python -m imitation.expert_algorithms.run_xpo_expert \
     --note="" \
-    --env_id="BreakoutNoFrameskip-v4" \
+    --env_id=$1 \
     --from_raw_pixels \
     --seed=0 \
     --log_dir="data/logs" \

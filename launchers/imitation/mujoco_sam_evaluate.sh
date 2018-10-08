@@ -8,11 +8,23 @@ python -m imitation.imitation_algorithms.run_sam \
     --env_id=$1 \
     --no-from_raw_pixels \
     --seed=0 \
+    --rmsify_obs \
+    --rmsify_rets \
+    --noise_type=none \
+    --with_layernorm \
+    --ac_branch_in=2 \
+    --no-prioritized_replay \
+    --no-ranked \
+    --no-add_demos_to_mem \
+    --no-unreal \
+    --wd_scale=0.001 \
+    --n_step_returns \
+    --n=96 \
     --log_dir="data/logs" \
     --task="evaluate_sam_policy" \
     --actorcritic_hid_widths 64 64 \
     --d_hid_widths 64 64 \
     --hid_nonlin="leaky_relu" \
-    --num_trajs=20 \
-    --no-render \
+    --num_trajs=10 \
+    --render \
     --model_ckpt_dir=$2
