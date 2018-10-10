@@ -12,7 +12,7 @@ from imitation.common.misc_util import zipsame, flatten_lists, prettify_time
 from imitation.common.math_util import explained_variance
 from imitation.common.math_util import augment_segment_gae_stats
 from imitation.common.console_util import columnize, timed_cm_wrapper, pretty_iter, pretty_elapsed
-from imitation.common.mpi_adam import MpiAdam
+from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.common.summary_util import CustomSummary
 from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce
 from imitation.expert_algorithms.xpo_util import traj_segment_generator
@@ -89,17 +89,23 @@ def learn(comm,
 
     # Create Theano-like ops
     compute_lossandgrad = U.function([ob, ac, adv, ret, lr_mult],
-                                     losses + [U.flatgrad(total_loss, pi.trainable_vars)])
+                                          losses + [U.flatgrad(total_loss,
+                                                               pi.trainable_vars)])
 
     # Create context manager that records the time taken by encapsulated ops
     timed = timed_cm_wrapper(comm=comm, logger=logger,
-                             color_message='magenta', color_elapsed_time='cyan')
+                                  color_message='magenta', color_elapsed_time='cyan')
 
     # Create mpi adam optimizer
-    adam = MpiAdam(pi.trainable_vars)
+    # adam = MpiAdam(pi.trainable_vars)
+    optimizer = MpiAdamOptimizer(comm, clip_norm=5.0, learning_rate=lr * lr_mult,
+                                      epsilon=1e-5, name='adam')
+    _optimize = optimizer.minimize(total_loss, var_list=pi.trainable_vars)
+    optimize = U.function([ob, ac, adv, ret, lr_mult], _optimize)
 
     U.initialize()
-    adam.sync()
+    # adam.sync()
+    optimizer.sync_from_root(pi.trainable_vars)
 
     if rank == 0:
         # Create summary writer
@@ -131,6 +137,11 @@ def learn(comm,
             break
         elif max_iters and iters_so_far >= max_iters:
             break
+
+        # Verify that the processes are still in sync
+        if rank == 0 and iters_so_far > 0 and iters_so_far % 10 == 0:
+            optimizer.check_synced(pi.trainable_vars)
+            logger.info("params still in sync across processes")
 
         # Manage lr multiplier schedule
         if schedule == 'constant':
@@ -182,7 +193,8 @@ def learn(comm,
                     args = (minibatch['obs'], minibatch['acs'],
                             minibatch['advs'], minibatch['td_lam_rets'])
                     *pi_losses, g = compute_lossandgrad(*args, current_lr_mult)
-                    adam.update(g, lr * current_lr_mult)
+                    # adam.update(g, lr * current_lr_mult)
+                    optimize(*args, current_lr_mult)
                     losses.append(pi_losses)
         # Log policy update statistics
         logger.info("logging training losses (log)")
