@@ -43,10 +43,10 @@ class Discriminator(my.AbstractModule):
         self.reward_nn = RewardNN(scope=self.scope, name='sr', hps=self.hps)
 
         # Create inputs
-        p_obs = tf.placeholder(name='p_obs', dtype=tf.float32, shape=(None,) + self.ob_shape)
-        p_acs = tf.placeholder(name='p_acs', dtype=tf.float32, shape=(None,) + self.ac_shape)
-        e_obs = tf.placeholder(name='e_obs', dtype=tf.float32, shape=(None,) + self.ob_shape)
-        e_acs = tf.placeholder(name='e_acs', dtype=tf.float32, shape=(None,) + self.ac_shape)
+        p_obs = U.get_placeholder(name='p_obs', dtype=tf.float32, shape=(None,) + self.ob_shape)
+        p_acs = U.get_placeholder(name='p_acs', dtype=tf.float32, shape=(None,) + self.ac_shape)
+        e_obs = U.get_placeholder(name='e_obs', dtype=tf.float32, shape=(None,) + self.ob_shape)
+        e_acs = U.get_placeholder(name='e_acs', dtype=tf.float32, shape=(None,) + self.ac_shape)
 
         # Rescale observations
         if self.hps.from_raw_pixels:
@@ -148,11 +148,12 @@ class Discriminator(my.AbstractModule):
         self.loss = tf.reduce_sum(self.weights * p_e_losses) + self.ent_loss + 10 * self.grad_pen
         # gradient penalty coefficient aligned with the value used in Gulrajani et al.
 
-        # Create Theano-like op that computes the discriminator losses and gradients
-        self.lossandgrad = U.function([p_obs, p_acs, e_obs, e_acs],
-                                      self.losses + [U.flatgrad(self.loss,
-                                                                self.trainable_vars,
-                                                                self.hps.clip_norm)])
+        # Create Theano-like op that computes the discriminator losses
+        self.compute_losses = U.function([p_obs, p_acs, e_obs, e_acs], self.losses)
+        self.compute_grads = U.function([p_obs, p_acs, e_obs, e_acs],
+                                        U.flatgrad(self.loss,
+                                                   self.trainable_vars,
+                                                   self.hps.clip_norm))
 
         # Create Theano-like op that compute the synthetic reward
         if self.hps.non_satur_grad:

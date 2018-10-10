@@ -13,12 +13,12 @@ from imitation.common.feeder import Feeder
 from imitation.common.misc_util import zipsame
 from imitation.common.math_util import meanv
 from imitation.common.console_util import timed_cm_wrapper, pretty_iter, pretty_elapsed, columnize
-from imitation.common.mpi_adam import MpiAdam
+from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.common.summary_util import CustomSummary
 from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce, mpi_moments
 
 
-def traj_segment_generator(env, mu, d, timesteps_per_batch, comm, rew_aug_coeff):
+def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff):
     t = 0
     ac = env.action_space.sample()
     done = True
@@ -68,7 +68,7 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, comm, rew_aug_coeff)
         cur_ep_syn_ret += syn_rew
         cur_ep_env_ret += env_rew
         stored_rew = syn_rew + (rew_aug_coeff * env_rew)
-        mu.store_transition(ob, ac, stored_rew, new_ob, done, comm)
+        mu.store_transition(ob, ac, stored_rew, new_ob, done)
         ob = copy.copy(new_ob)
         if done:
             ep_lens.append(cur_ep_len)
@@ -219,7 +219,27 @@ def learn(comm,
     # Create a sam agent, taking `d` as input
     mu = sam_agent_wrapper('mu', d)
 
-    d_adam = MpiAdam(d.trainable_vars)
+    # Create mpi adam optimizer for the discriminator
+    d_optimizer = MpiAdamOptimizer(comm, clip_norm=d.hps.clip_norm,
+                                   learning_rate=d_lr, name='d_adam')
+    _optimize_d = d_optimizer.minimize(d.loss, var_list=d.trainable_vars)
+
+    # Retrieve already-existing placeholders
+    p_obs = U.get_placeholder_cached(name='p_obs')
+    p_acs = U.get_placeholder_cached(name='p_acs')
+    e_obs = U.get_placeholder_cached(name='e_obs')
+    e_acs = U.get_placeholder_cached(name='e_acs')
+
+    # Create Theano-like ops
+    optimize_d = U.function([p_obs, p_acs, e_obs, e_acs], _optimize_d)
+
+    # Initialise variables
+    U.initialize()
+    # Sync params of all processes with the params of the root process...
+    # ... for the policy
+    mu.sync_from_root()
+    # ... and for the discrimininator
+    d_optimizer.sync_from_root(d.trainable_vars)
 
     if add_demos_to_mem:
         # Add demonstrations to memory
@@ -244,11 +264,6 @@ def learn(comm,
         _names.extend(d.loss_names)
         _summary = CustomSummary(scalar_keys=_names, family="sam")
 
-    # Initialize
-    U.initialize()
-    mu.initialize()
-    d_adam.sync()
-
     if isinstance(env.action_space, spaces.Box):
         # Logging the action scale + performing shape sanity check
         ac_scale = env.action_space.high
@@ -258,7 +273,7 @@ def learn(comm,
 
     # Create segment generator for training the agent
     assert 0 <= rew_aug_coeff <= 1
-    seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch, comm, rew_aug_coeff)
+    seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff)
     if eval_env is not None:
         # Create episode generator for evaluating the agent
         eval_ep_gen = traj_ep_generator(eval_env, mu, d, render)
@@ -308,6 +323,14 @@ def learn(comm,
             # Adapt the param noise threshold
             mu.adapt_eps_greedy(timesteps_so_far)
 
+        # Verify that the processes are still in sync
+        if iters_so_far > 0 and iters_so_far % 10 == 0:
+            logger.info("checking param sync across processes")
+            mu.actor_optimizer.check_synced(mu.actor.trainable_vars)
+            mu.critic_optimizer.check_synced(mu.critic.trainable_vars)
+            d_optimizer.check_synced(d.trainable_vars)
+            logger.info("  sync check passed")
+
         # Save the model
         if rank == 0 and iters_so_far % save_frequency == 0 and ckpt_dir is not None:
             model_path = osp.join(ckpt_dir, experiment_name)
@@ -341,8 +364,7 @@ def learn(comm,
                 # Train d with Feeder on the most recently collected data + expert data
                 # Create Feeder object to iterate over (ob, ret) pairs
                 feeder = Feeder(data_map=dict(obs=obs, acs=acs), enable_shuffle=True)
-                feeder_batch_size = len(obs) // d_steps
-                for minibatch in feeder.get_feed(batch_size=feeder_batch_size):
+                for minibatch in feeder.get_feed(batch_size=batch_size):
                     # Update discriminator w/ most recently collected samples & expert dataset
                     ob_pol, ac_pol = minibatch['obs'], minibatch['acs']
                     # Collect expert data w/ identical batch size (GAN's equal mixture)
@@ -359,9 +381,10 @@ def learn(comm,
                         d.obs_rms.update(np.concatenate((ob_pol, ob_exp), axis=0), comm)
 
                     # Compute losses and gradients
-                    *new_losses, grads = d.lossandgrad(ob_pol, ac_pol, ob_exp, ac_exp)
-                    # Use the retrieved local gradient to make an Adam optimization update
-                    d_adam.update(grads, d_lr)
+                    grads = d.compute_grads(ob_pol, ac_pol, ob_exp, ac_exp)
+                    new_losses = d.compute_losses(ob_pol, ac_pol, ob_exp, ac_exp)
+                    # Update discriminator
+                    optimize_d(ob_pol, ac_pol, ob_exp, ac_exp)
                     # Store the losses and gradients in their respective deques
                     d_grads_buffer.append(grads)
                     d_losses_buffer.append(new_losses)
@@ -382,9 +405,10 @@ def learn(comm,
                     d.obs_rms.update(np.concatenate((ob_pol_, ob_exp_), axis=0), comm)
 
                 # Compute losses and gradients
-                *new_losses, grads = d.lossandgrad(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
-                # Use the retrieved local gradient to make an Adam optimization update
-                d_adam.update(grads, d_lr)
+                grads = d.compute_grads(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
+                new_losses = d.compute_losses(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
+                # Update discriminator
+                optimize_d(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
                 # Store the losses and gradients in their respective deques
                 d_grads_buffer.append(grads)
                 d_losses_buffer.append(new_losses)

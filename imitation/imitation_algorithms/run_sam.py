@@ -38,7 +38,7 @@ def imitate_via_sam(args):
 
     # Create a sam agent wrapper (note the second input)
     def sam_agent_wrapper(name, d):
-        return SAMAgent(name=name, env=env, hps=actorcritic_hps, d=d)
+        return SAMAgent(name=name, comm=comm, env=env, hps=actorcritic_hps, d=d)
 
     # Create experiment name
     experiment_name = experiment.get_long_name()

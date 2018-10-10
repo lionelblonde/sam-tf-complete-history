@@ -12,7 +12,7 @@ from imitation.common.misc_util import zipsame, flatten_lists, prettify_time
 from imitation.common.math_util import explained_variance, conjugate_gradient
 from imitation.common.math_util import augment_segment_gae_stats
 from imitation.common.console_util import columnize, timed_cm_wrapper, pretty_iter, pretty_elapsed
-from imitation.common.mpi_adam import MpiAdam
+from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.common.summary_util import CustomSummary
 from imitation.common.mpi_moments import mpi_mean_like
 from imitation.expert_algorithms.xpo_util import traj_segment_generator
@@ -94,29 +94,32 @@ def learn(comm,
         assign_op = tf.assign(k, v)
         updates_op.append(assign_op)
     assert len(updates_op) == len(pi.vars)
-    # Create Theano-like op that performs the update
-    assign_old_eq_new = U.function([], [], updates=updates_op)
+
+    # Create mpi adam optimizer for the value function
+    vf_optimizer = MpiAdamOptimizer(comm, clip_norm=5.0, learning_rate=vf_lr, name='vf_adam')
+    _optimize_vf = vf_optimizer.minimize(vf_err, var_list=pi.vf_trainable_vars)
 
     # Create Theano-like ops
+    assign_old_eq_new = U.function([], [], updates=updates_op)
     compute_losses = U.function([ob, ac, adv, ret], losses)
-    compute_lossandgrad = U.function([ob, ac, adv, ret],
-                                     losses + [U.flatgrad(optim_gain, pi.pol_trainable_vars)])
+    compute_losses_grads = U.function([ob, ac, adv, ret],
+                                      losses + [U.flatgrad(optim_gain, pi.pol_trainable_vars)])
     compute_fvp = U.function([flat_tangent, ob, ac, adv], fvp)
-    compute_vf_grad = U.function([ob, ret], U.flatgrad(vf_err, pi.vf_trainable_vars))
+    optimize_vf = U.function([ob, ret], _optimize_vf)
+
+    # Initialise variables
+    U.initialize()
+    # Sync params of all processes with the params of the root process...
+    # ... for the policy
+    theta_init = get_flat()
+    comm.Bcast(theta_init, root=0)
+    set_from_flat(theta_init)
+    # ... and for the value function
+    vf_optimizer.sync_from_root(pi.vf_trainable_vars)
 
     # Create context manager that records the time taken by encapsulated ops
     timed = timed_cm_wrapper(comm=comm, logger=logger,
                              color_message='magenta', color_elapsed_time='cyan')
-
-    # Create mpi adam optimizer
-    vf_adam = MpiAdam(pi.vf_trainable_vars)
-
-    U.initialize()
-    # Sync the policy params across processes
-    theta_init = get_flat()
-    comm.Bcast(theta_init, root=0)
-    set_from_flat(theta_init)
-    vf_adam.sync()
 
     if rank == 0:
         # Create summary writer
@@ -125,6 +128,7 @@ def learn(comm,
         _names = ep_stats_names + loss_names
         _summary = CustomSummary(scalar_keys=_names, family="trpo")
 
+    # Create segment generator
     seg_gen = traj_segment_generator(env, pi, timesteps_per_batch, sample_or_mode)
 
     eps_so_far = 0
@@ -148,6 +152,11 @@ def learn(comm,
             break
         elif max_iters and iters_so_far >= max_iters:
             break
+
+        # Verify that the processes are still in sync
+        if iters_so_far > 0 and iters_so_far % 10 == 0:
+            vf_optimizer.check_synced(pi.vf_trainable_vars)
+            logger.info("vf params still in sync across processes")
 
         # Save the model
         if rank == 0 and iters_so_far % save_frequency == 0 and ckpt_dir is not None:
@@ -186,7 +195,7 @@ def learn(comm,
 
         # Compute gradients
         with timed("computing gradients"):
-            *loss_before, g = compute_lossandgrad(obs, acs, advs, td_lam_rets)
+            *loss_before, g = compute_losses_grads(obs, acs, advs, td_lam_rets)
         loss_before = mpi_mean_like(loss_before, comm)
         g = mpi_mean_like(g, comm)
         if np.allclose(g, 0):
@@ -238,8 +247,7 @@ def learn(comm,
         with timed("updating value function"):
             for _ in range(vf_iters):
                 for minibatch in feeder.get_feed(batch_size=batch_size):
-                    g = compute_vf_grad(minibatch['obs'], minibatch['td_lam_rets'])
-                    vf_adam.update(g, vf_lr)
+                    optimize_vf(minibatch['obs'], minibatch['td_lam_rets'])
         # Log policy update statistics
         logger.info("logging training losses (log)")
         zipped_losses = zipsame(loss_names, pi_losses, pi_losses_mpi_mean)
