@@ -68,15 +68,11 @@ def learn(comm,
     loss_names = ["kl_mean", "ent_mean", "ent_bonus", "surr_gain", "optim_gain", "vf_err"]
     loss_names = ["pol_" + e for e in loss_names]
 
-    # Extract trainable variables
-    gp_trainable_vars = pi.gp_trainable_vars
-    vf_trainable_vars = pi.vf_trainable_vars
-
     # Build natural gradient material
-    get_flat = U.GetFlat(gp_trainable_vars)
-    set_from_flat = U.SetFromFlat(gp_trainable_vars)
-    kl_grads = tf.gradients(kl_mean, gp_trainable_vars)
-    shapes = [var.get_shape().as_list() for var in gp_trainable_vars]
+    get_flat = U.GetFlat(pi.pol_trainable_vars)
+    set_from_flat = U.SetFromFlat(pi.pol_trainable_vars)
+    kl_grads = tf.gradients(kl_mean, pi.pol_trainable_vars)
+    shapes = [var.get_shape().as_list() for var in pi.pol_trainable_vars]
     start = 0
     tangents = []
     for shape in shapes:
@@ -87,7 +83,7 @@ def learn(comm,
     gvp = tf.add_n([tf.reduce_sum(g * tangent)
                     for (g, tangent) in zipsame(kl_grads, tangents)])
     # Create the Fisher vector product
-    fvp = U.flatgrad(gvp, gp_trainable_vars)
+    fvp = U.flatgrad(gvp, pi.pol_trainable_vars)
 
     # Make the current `pi` become the next `old_pi`
     zipped = zipsame(old_pi.vars, pi.vars)
@@ -104,19 +100,19 @@ def learn(comm,
     # Create Theano-like ops
     compute_losses = U.function([ob, ac, adv, ret], losses)
     compute_lossandgrad = U.function([ob, ac, adv, ret],
-                                     losses + [U.flatgrad(optim_gain, gp_trainable_vars)])
+                                     losses + [U.flatgrad(optim_gain, pi.pol_trainable_vars)])
     compute_fvp = U.function([flat_tangent, ob, ac, adv], fvp)
-    compute_vf_grad = U.function([ob, ret], U.flatgrad(vf_err, vf_trainable_vars))
+    compute_vf_grad = U.function([ob, ret], U.flatgrad(vf_err, pi.vf_trainable_vars))
 
     # Create context manager that records the time taken by encapsulated ops
     timed = timed_cm_wrapper(comm=comm, logger=logger,
                              color_message='magenta', color_elapsed_time='cyan')
 
     # Create mpi adam optimizer
-    vf_adam = MpiAdam(vf_trainable_vars)
+    vf_adam = MpiAdam(pi.vf_trainable_vars)
 
     U.initialize()
-    # Initialize MPI sync
+    # Sync the policy params across processes
     theta_init = get_flat()
     comm.Bcast(theta_init, root=0)
     set_from_flat(theta_init)

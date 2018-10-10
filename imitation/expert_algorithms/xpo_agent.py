@@ -109,11 +109,11 @@ class XPOAgent(my.AbstractModule):
         return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.scope)
 
     @property
-    def gp_vars(self):
+    def pol_vars(self):
         return self.policy_nn.vars
 
     @property
-    def gp_trainable_vars(self):
+    def pol_trainable_vars(self):
         return self.policy_nn.trainable_vars
 
     @property

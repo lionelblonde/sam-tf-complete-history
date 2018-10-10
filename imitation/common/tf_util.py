@@ -378,13 +378,13 @@ def var_shape(x):
     return out
 
 
+def intprod(x):
+    return int(np.prod(x))
+
+
 def numel(x):
     """Returns the number of elements in `x`"""
     return intprod(var_shape(x))
-
-
-def intprod(x):
-    return int(np.prod(x))
 
 
 def flatgrad(loss, var_list, clip_norm=None):
@@ -396,7 +396,7 @@ def flatgrad(loss, var_list, clip_norm=None):
         grads, _ = tf.clip_by_global_norm(grads, clip_norm=clip_norm)
     vars_and_grads = zipsame(var_list, grads)  # zip with extra security
     for index, (var, grad) in enumerate(vars_and_grads):
-        # If by messing around the grad gets stopped, set the grad as zero vector
+        # If the gradient gets stopped for some obsure reason, set the grad as zero vector
         _grad = grad if grad is not None else tf.zeros_like(var)
         # Reshape the grad into a vector
         grads[index] = tf.reshape(_grad, [numel(var)])
