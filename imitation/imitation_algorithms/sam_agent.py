@@ -10,7 +10,7 @@ from imitation.common import logger
 from imitation.common.mpi_moments import mpi_mean_like
 from imitation.common.mpi_running_mean_std import RunningMeanStd
 from imitation.common.misc_util import onehotify, flatten_lists, fl32, zipsame
-from imitation.common.mpi_adam import MpiAdam
+from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.imitation_algorithms import memory as XP
 
 
@@ -64,8 +64,9 @@ class SAMAgent(my.AbstractModule):
             self.scope = tf.get_variable_scope().name
             self._init(*args, **kwargs)
 
-    def _init(self, env, hps, d):
+    def _init(self, comm, env, hps, d):
         # Parameters
+        self.comm = comm
         self.env = env
         self.ob_shape = self.env.observation_space.shape
         self.ac_space = self.env.action_space
@@ -394,12 +395,18 @@ class SAMAgent(my.AbstractModule):
                                       self.actor.trainable_vars,
                                       self.hps.clip_norm)
 
+        # Create mpi adam optimizer
+        self.actor_optimizer = MpiAdamOptimizer(comm=self.comm,
+                                                clip_norm=self.hps.clip_norm,
+                                                learning_rate=self.hps.actor_lr,
+                                                name='actor_adam')
+        _optimize_actor = self.actor_optimizer.minimize(self.actor_loss,
+                                                        var_list=self.actor.trainable_vars)
+
         # Create Theano-like ops
         self.get_actor_losses = U.function(phs, self.actor_losses)
         self.get_actor_grads = U.function(phs, self.actor_grads)
-
-        # Create mpi adam optimizer
-        self.actor_optimizer = MpiAdam(var_list=self.actor.trainable_vars)
+        self.optimize_actor = U.function(phs, _optimize_actor)
 
         # Log statistics
         self.log_module_info(self.actor)
@@ -472,18 +479,24 @@ class SAMAgent(my.AbstractModule):
                                        self.critic.trainable_vars,
                                        self.hps.clip_norm)
 
+        # Create mpi adam optimizer
+        self.critic_optimizer = MpiAdamOptimizer(comm=self.comm,
+                                                 clip_norm=self.hps.clip_norm,
+                                                 learning_rate=self.hps.critic_lr,
+                                                 name='critic_adam')
+        _optimize_critic = self.critic_optimizer.minimize(self.critic_loss,
+                                                          var_list=self.critic.trainable_vars)
+
         # Create Theano-like ops
         self.get_critic_losses = U.function(phs, self.critic_losses)
         self.get_critic_grads = U.function(phs, self.critic_grads)
+        self.optimize_critic = U.function(phs, _optimize_critic)
 
         if self.hps.prioritized_replay:  # `self.iws` already properly inserted
             td_errors_ops = [self.td_errors_1] + ([self.td_errors_n]
                                                   if self.hps.n_step_returns
                                                   else [])
             self.get_td_errors = U.function(phs, td_errors_ops)
-
-        # Create mpi adam optimizer
-        self.critic_optimizer = MpiAdam(var_list=self.critic.trainable_vars)
 
         # Log statistics
         self.log_module_info(self.critic)
@@ -544,7 +557,7 @@ class SAMAgent(my.AbstractModule):
             ac += noise
         return ac, np.asscalar(q.flatten())
 
-    def store_transition(self, ob0, ac, rew, ob1, done1, comm):
+    def store_transition(self, ob0, ac, rew, ob1, done1):
         """Store a experiental transition in the replay buffer"""
         # Scale the reward
         rew *= self.hps.reward_scale
@@ -552,7 +565,7 @@ class SAMAgent(my.AbstractModule):
         self.replay_buffer.append(ob0, ac, rew, ob1, done1)
         if self.hps.rmsify_obs:
             # Update running mean and std over observations
-            self.obs_rms.update(np.array([ob0]), comm)
+            self.obs_rms.update(np.array([ob0]), self.comm)
 
     def train(self):
         """Train the SAM agent"""
@@ -611,8 +624,8 @@ class SAMAgent(my.AbstractModule):
         critic_grads = self.get_critic_grads(*b_vs)
 
         # Perform mpi gradient descent update
-        self.actor_optimizer.update(actor_grads, stepsize=self.hps.actor_lr)
-        self.critic_optimizer.update(critic_grads, stepsize=self.hps.critic_lr)
+        self.optimize_actor(b_obs0)
+        self.optimize_critic(*b_vs)
 
         if self.hps.prioritized_replay:
             # Update priorities
@@ -636,11 +649,11 @@ class SAMAgent(my.AbstractModule):
 
         return losses_and_grads
 
-    def initialize(self, sess=None):
+    def sync_from_root(self):
         """Initialize both actor and critic, as well as their target counterparts"""
         # Synchronize the optimizers across all mpi workers
-        self.actor_optimizer.sync()
-        self.critic_optimizer.sync()
+        self.actor_optimizer.sync_from_root(self.actor.trainable_vars)
+        self.critic_optimizer.sync_from_root(self.critic.trainable_vars)
         # Initialize target networks as hard copies of the main networks
         self.perform_targ_hard_updates()
 

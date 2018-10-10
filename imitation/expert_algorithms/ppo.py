@@ -84,28 +84,24 @@ def learn(comm,
         assign_op = tf.assign(k, v)
         updates_op.append(assign_op)
     assert len(updates_op) == len(pi.vars)
-    # Create Theano-like op that performs the update
-    assign_old_eq_new = U.function([], [], updates=updates_op)
+
+    # Create mpi adam optimizer
+    optimizer = MpiAdamOptimizer(comm, clip_norm=5.0, learning_rate=lr * lr_mult, name='adam')
+    _optimize = optimizer.minimize(total_loss, var_list=pi.trainable_vars)
 
     # Create Theano-like ops
-    compute_lossandgrad = U.function([ob, ac, adv, ret, lr_mult],
-                                          losses + [U.flatgrad(total_loss,
-                                                               pi.trainable_vars)])
+    assign_old_eq_new = U.function([], [], updates=updates_op)
+    compute_losses = U.function([ob, ac, adv, ret, lr_mult], losses)
+    optimize = U.function([ob, ac, adv, ret, lr_mult], _optimize)
+
+    # Initialise variables
+    U.initialize()
+    # Sync params of all processes with the params of the root process
+    optimizer.sync_from_root(pi.trainable_vars)
 
     # Create context manager that records the time taken by encapsulated ops
     timed = timed_cm_wrapper(comm=comm, logger=logger,
-                                  color_message='magenta', color_elapsed_time='cyan')
-
-    # Create mpi adam optimizer
-    # adam = MpiAdam(pi.trainable_vars)
-    optimizer = MpiAdamOptimizer(comm, clip_norm=5.0, learning_rate=lr * lr_mult,
-                                      epsilon=1e-5, name='adam')
-    _optimize = optimizer.minimize(total_loss, var_list=pi.trainable_vars)
-    optimize = U.function([ob, ac, adv, ret, lr_mult], _optimize)
-
-    U.initialize()
-    # adam.sync()
-    optimizer.sync_from_root(pi.trainable_vars)
+                             color_message='magenta', color_elapsed_time='cyan')
 
     if rank == 0:
         # Create summary writer
@@ -114,6 +110,7 @@ def learn(comm,
         _names = ep_stats_names + loss_names
         _summary = CustomSummary(scalar_keys=_names, family="ppo")
 
+    # Create segment generator
     seg_gen = traj_segment_generator(env, pi, timesteps_per_batch, sample_or_mode)
 
     eps_so_far = 0
@@ -139,15 +136,15 @@ def learn(comm,
             break
 
         # Verify that the processes are still in sync
-        if rank == 0 and iters_so_far > 0 and iters_so_far % 10 == 0:
+        if iters_so_far > 0 and iters_so_far % 10 == 0:
             optimizer.check_synced(pi.trainable_vars)
             logger.info("params still in sync across processes")
 
         # Manage lr multiplier schedule
         if schedule == 'constant':
-            current_lr_mult = 1.0
+            curr_lr_mult = 1.0
         elif schedule == 'linear':
-            current_lr_mult = max(1.0 - float(timesteps_per_batch) / max_timesteps, 0)
+            curr_lr_mult = max(1.0 - float(timesteps_so_far) / max_timesteps, 0)
         else:
             raise NotImplementedError
 
@@ -192,9 +189,8 @@ def learn(comm,
                 for minibatch in feeder.get_feed(batch_size=batch_size):
                     args = (minibatch['obs'], minibatch['acs'],
                             minibatch['advs'], minibatch['td_lam_rets'])
-                    *pi_losses, g = compute_lossandgrad(*args, current_lr_mult)
-                    # adam.update(g, lr * current_lr_mult)
-                    optimize(*args, current_lr_mult)
+                    pi_losses = compute_losses(*args, curr_lr_mult)
+                    optimize(*args, curr_lr_mult)
                     losses.append(pi_losses)
         # Log policy update statistics
         logger.info("logging training losses (log)")
