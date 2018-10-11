@@ -32,21 +32,23 @@ class ExperimentInitializer:
         self.args = args
         self.name_prefix = name_prefix
         self.comm = comm
+        if self.comm is not None:
+            self.rank = self.comm.Get_rank()
         # Set printing options
         np.set_printoptions(precision=3)
 
-    def configure(self):
+    def configure_logging(self):
         """Configure the experiment"""
-        if self.comm is None or self.comm.Get_rank() == 0:
+        if self.comm is None or self.rank == 0:
             log_path = self.get_log_path()
             formats_strs = ['stdout', 'log', 'csv']
             fmtstr = "configuring logger"
-            if self.comm is not None and self.comm.Get_rank() == 0:
+            if self.comm is not None and self.rank == 0:
                 fmtstr += " [master]"
             logger.info(fmtstr)
             logger.configure(dir_=log_path, format_strs=formats_strs)
             fmtstr = "logger configured"
-            if self.comm is not None and self.comm.Get_rank() == 0:
+            if self.comm is not None and self.rank == 0:
                 fmtstr += " [master]"
             logger.info(fmtstr)
             logger.info("  directory: {}".format(log_path))
@@ -64,7 +66,7 @@ class ExperimentInitializer:
                 fmtstr += " [{} MPI workers]".format(self.comm.Get_size())
             logger.info(fmtstr)
         else:
-            logger.info("configuring logger [worker #{}]".format(self.comm.Get_rank()))
+            logger.info("configuring logger [worker #{}]".format(self.rank))
             logger.configure(dir_=None, format_strs=None)
             logger.set_level(logger.DISABLED)
 

@@ -6,6 +6,7 @@ from imitation.common import tf_util as U
 from imitation.common.argparsers import sam_argparser, disambiguate
 from imitation.common.experiment_initializer import ExperimentInitializer
 from imitation.common.env_makers import make_env
+from imitation.common.misc_util import set_global_seeds
 from imitation.imitation_algorithms.sam_agent import SAMAgent
 from imitation.imitation_algorithms.discriminator import Discriminator
 from imitation.imitation_algorithms import sam
@@ -22,11 +23,13 @@ def imitate_via_sam(args):
 
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args, comm=comm)
-    experiment.configure()
+    experiment.configure_logging()
 
-    # Create environment
+    # Seedify
     rank = comm.Get_rank()
-    worker_seed = args.seed + 10000 * rank
+    worker_seed = args.seed + 1000000 * rank
+    set_global_seeds(worker_seed)
+    # Create environment
     name = "{}.worker_{}".format(args.task, rank)
     env = make_env(args)(args.env_id, worker_seed, name, args.horizon)
 
@@ -93,8 +96,10 @@ def evaluate_sam_policy(args):
 
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args)
-    experiment.configure()
+    experiment.configure_logging()
 
+    # Seedify
+    set_global_seeds(args.seed)
     # Create environment
     env = make_env(args)(args.env_id, args.seed, args.task, args.horizon)
 

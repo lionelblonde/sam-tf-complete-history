@@ -3,7 +3,6 @@ import os.path as osp
 import gym
 
 from imitation.common.monitor import Monitor
-from imitation.common.misc_util import set_global_seeds
 from imitation.common import logger
 
 
@@ -29,7 +28,6 @@ def assert_admissibility(env_id):
 def make_mujoco_env(env_id, seed, name, horizon=None, allow_early_resets=False):
     """Create a wrapped, monitored gym.Env for MuJoCo"""
     assert_admissibility(env_id)
-    set_global_seeds(seed)
     env = gym.make(env_id)
     if horizon is not None:
         # Override the default episode horizon
@@ -46,7 +44,6 @@ def make_atari_env(env_id, seed, name, horizon=None, allow_early_resets=False):
     """Create a wrapped, monitored gym.Env for Atari"""
     assert_admissibility(env_id)
     from imitation.common.atari_wrappers import make_atari, wrap_deepmind
-    set_global_seeds(seed)
     env = make_atari(env_id)
     if horizon is not None:
         # Override the default episode horizon
@@ -57,7 +54,7 @@ def make_atari_env(env_id, seed, name, horizon=None, allow_early_resets=False):
                   allow_early_resets=allow_early_resets)
     env.seed(seed)
     # Wrap (second wrapper) with DeepMind's wrapper
-    env = wrap_deepmind(env)
+    env = wrap_deepmind(env, frame_stack=True)
     env.seed(seed)
     return env
 
