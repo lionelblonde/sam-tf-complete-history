@@ -133,7 +133,7 @@ class SAMAgent(my.AbstractModule):
                                       ac_space=self.ac_space, hps=self.hps)
 
         # Retrieve the synthetic reward network
-        self.reward = d.reward_nn  # can be used to implement another priority update heuristic
+        self.reward = d  # can be used to implement another priority update heuristic
 
         # Rescale observations
         if self.hps.from_raw_pixels:
@@ -578,8 +578,8 @@ class SAMAgent(my.AbstractModule):
             batch = self.replay_buffer.sample(batch_size=self.hps.batch_size)
         # Unpack the sampled batch (manually to disambiguate ordering)
         b_obs0 = batch['obs0']
-        b_obs1 = batch['obs1']
         b_acs = batch['acs']
+        b_obs1 = batch['obs1']
         b_rews = batch['rews']
         b_dones1 = fl32(batch['dones1'])
         if self.hps.n_step_returns:

@@ -452,7 +452,7 @@ def learn(comm,
             for minibatch in d_feeder.get_feed(batch_size=batch_size):
                 ob_agent, ac_agent = minibatch['obs'], minibatch['acs']
                 # Collect as many data demonstrations (pairs) as experienced (GAN's equal mixture)
-                ob_expert, ac_expert = expert_dataset.get_next_p_batch(batch_size=len(ob_agent))
+                ob_expert, ac_expert = expert_dataset.get_next_pair_batch(batch_size=len(ob_agent))
 
                 if "NoFrameskip" in env.spec.id:
                     # Expand the dimension for Atari

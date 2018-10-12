@@ -368,7 +368,7 @@ def learn(comm,
                     # Update discriminator w/ most recently collected samples & expert dataset
                     ob_pol, ac_pol = minibatch['obs'], minibatch['acs']
                     # Collect expert data w/ identical batch size (GAN's equal mixture)
-                    ob_exp, ac_exp = expert_dataset.get_next_p_batch(batch_size=len(ob_pol))
+                    ob_exp, ac_exp = expert_dataset.get_next_pair_batch(batch_size=len(ob_pol))
 
                     if isinstance(env.action_space, spaces.Discrete):
                         # Expand dimension for discete actions envs
@@ -398,7 +398,7 @@ def learn(comm,
                 ob_pol_, ac_pol_ = xp_batch['obs0'], xp_batch['acs']
 
                 # Collect expert data w/ identical batch size (GAN's equal mixture)
-                ob_exp_, ac_exp_ = expert_dataset.get_next_p_batch(batch_size=batch_size)
+                ob_exp_, ac_exp_ = expert_dataset.get_next_pair_batch(batch_size=batch_size)
 
                 # Update running mean and std on states
                 if hasattr(d, "obs_rms"):

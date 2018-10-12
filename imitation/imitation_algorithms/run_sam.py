@@ -47,7 +47,8 @@ def imitate_via_sam(args):
     experiment_name = experiment.get_long_name()
 
     # Create the expert demonstrations dataset from expert trajectories
-    dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos)
+    dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos,
+                          train_fraction=None, randomize=True, full=args.add_demos_to_mem)
 
     # Create an evaluation environment not to mess up with training rollouts
     eval_env = None

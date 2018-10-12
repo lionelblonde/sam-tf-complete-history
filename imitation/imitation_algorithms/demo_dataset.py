@@ -41,57 +41,9 @@ class PairDataset(object):
         return obs0, acs
 
 
-class TransitionDataset(object):
-    """Data containing (state, action, reward, end of episode, next state) tuples"""
-
-    def __init__(self, obs0, acs, env_rews, dones1, obs1, randomize):
-        self.obs0 = obs0
-        self.acs = acs
-        self.env_rews = env_rews
-        self.dones1 = dones1
-        self.obs1 = obs1
-        self.num_entries = len(self.obs0)
-        assert all(len(x) == self.num_entries for x in [self.obs0, self.acs, self.env_rews,
-                                                        self.dones1, self.obs1])
-        self.randomize = randomize
-        self.init_pointer()
-
-    def init_pointer(self):
-        self.pointer = 0
-        if self.randomize:
-            # Create vector of indices
-            indices = np.arange(self.num_entries)
-            # Shuffle the indices
-            np.random.shuffle(indices)
-            # Rearrange the transitions according to the indices
-            self.obs0 = self.obs0[indices, :]
-            self.acs = self.acs[indices, :]
-            self.env_rews = self.env_rews[indices, :]
-            self.dones1 = self.dones1[indices, :]
-            self.obs1 = self.obs1[indices, :]
-
-    def get_next_batch(self, batch_size):
-        """Returns a batch of transitions"""
-        # if batch_size is negative -> return all
-        if batch_size < 0:
-            return self.obs0, self.acs, self.env_rews, self.dones1, self.obs1
-        if self.pointer + batch_size >= self.num_entries:
-            # if there are not enough pairs left after the pointer, reset the pointer,
-            # which shuffles the dataset if `randomize` is True
-            self.init_pointer()
-        end = self.pointer + batch_size
-        obs0 = self.obs0[self.pointer:end, :]
-        acs = self.acs[self.pointer:end, :]
-        rews = self.env_rews[self.pointer:end, :]
-        dones1 = self.dones1[self.pointer:end, :]
-        obs1 = self.obs1[self.pointer:end, :]
-        self.pointer = end
-        return obs0, acs, rews, dones1, obs1
-
-
 class DemoDataset(object):
 
-    def __init__(self, expert_arxiv, size, train_fraction=None, randomize=True):
+    def __init__(self, expert_arxiv, size, train_fraction=None, randomize=True, full=False):
         """Create a dataset given the `expert_path` expert demonstration trajectories archive.
         Data structure of the archive in .npz format:
         the transitions are saved in python dictionary format with keys:
@@ -100,27 +52,25 @@ class DemoDataset(object):
         Note that 'ep_rets' is stored solely for monitoring purposes, and w/o 'ep_rets',
         a transition corrsponds exactly to the format of transitions stored in memory.
         """
-        logger.info("loading expert demonstration trajectories from archive")
-        # Load the .npz archive file
-        self.traj_data = np.load(expert_arxiv)
-
-        # Establish the num of trajectories to work w/: `self.size`
         self.size = size
-        if self.size is None or self.size > self.total_num_trajs or self.size <= 0:
-            # Override `num_demo_trajs` w/ the max available num of trajs, i.e. all of them
-            self.size = self.total_num_trajs
+        # Load the .npz archive file
+        logger.info("loading expert demonstration trajectories from archive")
+        traj_data = np.load(expert_arxiv)
+        assert 0 <= self.size <= len(traj_data['obs0']), "wrong demo dataset size"  # arbitrarily
+
         # Unpack
         #   1. Slice the desired quantity of trajectories
         #   2. Flatten the list of trajectories into a list of transitions
         #   Unpacking in done separately for each atom
-        self.obs0 = np.array(flatten(self.traj_data['obs0'][:self.size]))
-        self.acs = np.array(flatten(self.traj_data['acs'][:self.size]))
-        self.env_rews = np.array(flatten(self.traj_data['env_rews'][:self.size]))
-        self.dones1 = np.array(flatten(self.traj_data['dones1'][:self.size]))
-        self.obs1 = np.array(flatten(self.traj_data['obs1'][:self.size]))
+        self.obs0 = np.array(flatten(traj_data['obs0'][:self.size]))
+        self.acs = np.array(flatten(traj_data['acs'][:self.size]))
+        if full:
+            self.env_rews = np.array(flatten(traj_data['env_rews'][:self.size]))
+            self.dones1 = np.array(flatten(traj_data['dones1'][:self.size]))
+            self.obs1 = np.array(flatten(traj_data['obs1'][:self.size]))
 
-        self.ep_rets = self.traj_data['ep_env_rets'][:self.size]
-        self.ep_lens = self.traj_data['ep_lens'][:self.size]
+        self.ep_rets = traj_data['ep_env_rets'][:self.size]
+        self.ep_lens = traj_data['ep_lens'][:self.size]
 
         # Compute dataset statistics
         self.ret_mean = np.mean(np.array(self.ep_rets))
@@ -148,13 +98,13 @@ class DemoDataset(object):
     def log_info(self):
         logger.info("successfully initialized (obs0,acs) dataset, w/ statitics:")
         logger.info("  extracted num trajectories: {}".format(self.size))
-        logger.info("  extracted num transitions: {}".format(self.extracted_num_transitions))
+        logger.info("  extracted num transitions: {}".format(len(self.obs0)))  # arbitrarily
         logger.info("  trajectory return mean: {}".format(self.ret_mean))
         logger.info("  trajectory return std: {}".format(self.ret_std))
         logger.info("  trajectory length mean: {}".format(self.len_mean))
         logger.info("  trajectory length std: {}".format(self.len_std))
 
-    def get_next_p_batch(self, batch_size, split=None):
+    def get_next_pair_batch(self, batch_size, split=None):
         """Returns a batch of pairs"""
         if split is None:
             return self.pair_dset.get_next_batch(batch_size)
@@ -162,17 +112,6 @@ class DemoDataset(object):
             return self.pair_train_set.get_next_batch(batch_size)
         elif split == 'val':
             return self.pair_val_set.get_next_batch(batch_size)
-        else:
-            raise NotImplementedError
-
-    def get_next_t_batch(self, batch_size, split=None):
-        """Returns a batch of transitions"""
-        if split is None:
-            return self.transition_dset.get_next_batch(batch_size)
-        elif split == 'train':
-            return self.transition_train_set.get_next_batch(batch_size)
-        elif split == 'val':
-            return self.transition_val_set.get_next_batch(batch_size)
         else:
             raise NotImplementedError
 
@@ -184,21 +123,6 @@ class DemoDataset(object):
         plt.grid(True)
         plt.show()
         plt.close()
-
-    @property
-    def total_num_trajs(self):
-        """Get the num of trajectories
-        traj_data['w/e'] is a list of lists of w/e, each sub-list corresponding to a traj
-        len(traj_data['w/e']) therefore is the total num of trajs in the archive
-        Since the structure is similar for every atomic element of a transition,
-        we arbitrarily picked 'obs0'.
-        """
-        return len(self.traj_data['obs0'])
-
-    @property
-    def extracted_num_transitions(self):
-        # `self.obs0` picked arbitrarily
-        return len(self.obs0)
 
 
 def flatten(x):
