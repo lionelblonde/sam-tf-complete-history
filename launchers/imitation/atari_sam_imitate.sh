@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Example: ./atari_sam_imitate.sh <num_mpi_workers> <env_id> <expert_demos_path>
+# Example: ./atari_sam_imitate.sh <num_mpi_workers> <env_id> <expert_demos_path> <num_demos>
 
 cd ../..
 
@@ -14,14 +14,14 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --task="imitate_via_sam" \
     --expert_path=$3 \
     --no-rmsify_obs \
-    --save_frequency=10 \
+    --save_frequency=100 \
     --num_timesteps=10000000 \
-    --training_steps_per_iter=20 \
+    --training_steps_per_iter=40 \
     --eval_steps_per_iter=10 \
     --no-render \
     --timesteps_per_batch=4 \
-    --batch_size=32 \
-    --num_demos=16 \
+    --batch_size=256 \
+    --num_demos=$4 \
     --g_steps=3 \
     --d_steps=1 \
     --no-non_satur_grad \
@@ -35,7 +35,7 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --d_hid_widths 128 \
     --hid_nonlin="leaky_relu" \
     --hid_w_init="he_normal" \
-    --tau=0.001 \
+    --tau=0.01 \
     --with_layernorm \
     --ac_branch_in=1 \
     --d_ent_reg_scale=0. \
@@ -64,4 +64,4 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --td_loss_n_scale=1. \
     --wd_scale=0.001 \
     --n_step_returns \
-    --n=60
+    --n=96

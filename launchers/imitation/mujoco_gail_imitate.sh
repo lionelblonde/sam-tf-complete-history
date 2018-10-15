@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Example: ./mujoco_gail_imitate.sh <num_mpi_workers> <env_id> <expert_demos_path>
+# Example: ./mujoco_gail_imitate.sh <num_mpi_workers> <env_id> <expert_demos_path> <num_demos>
 
 cd ../..
 
@@ -14,12 +14,12 @@ mpirun -np $1 --bind-to core python -m imitation.imitation_algorithms.run_gail \
     --task="imitate_via_gail" \
     --expert_path=$3 \
     --rmsify_obs \
-    --save_frequency=10 \
+    --save_frequency=100 \
     --num_timesteps=10000000 \
     --timesteps_per_batch=1024 \
     --batch_size=64 \
     --sample_or_mode \
-    --num_demos=16 \
+    --num_demos=$4 \
     --g_steps=3 \
     --d_steps=1 \
     --no-non_satur_grad \

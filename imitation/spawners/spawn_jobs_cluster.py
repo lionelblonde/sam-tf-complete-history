@@ -189,7 +189,6 @@ def get_rand_hps(args, meta):
                      'timesteps_per_batch': 1024,
                      'batch_size': 128,
                      'sample_or_mode': 1,
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -226,12 +225,11 @@ def get_rand_hps(args, meta):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': np.random.choice([2, 4, 8, 16, 32]),
+                     'training_steps_per_iter': np.random.choice([10, 20, 40]),
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
-                     'batch_size': np.random.choice([16, 32, 64]),
-                     'num_demos': 16,
+                     'batch_size': np.random.choice([32, 64, 128, 256]),
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -245,7 +243,7 @@ def get_rand_hps(args, meta):
                      'd_hid_widths': (128,),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': np.random.choice([0.001, 0.01]),
+                     'tau': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -274,7 +272,7 @@ def get_rand_hps(args, meta):
                      'td_loss_n_scale': 1.,
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
-                     'n': np.random.choice([10, 20, 40, 60])}
+                     'n': np.random.choice([36, 72, 96])}
             return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                     for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
     # MuJoCo
@@ -322,7 +320,6 @@ def get_rand_hps(args, meta):
                      'timesteps_per_batch': 1024,
                      'batch_size': 128,
                      'sample_or_mode': 1,
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -353,7 +350,7 @@ def get_rand_hps(args, meta):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': np.random.choice([2, 4, 8, 16, 32]),
+                     'training_steps_per_iter': np.random.choice([10, 20, 40]),
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
@@ -366,7 +363,7 @@ def get_rand_hps(args, meta):
                      'd_hid_widths': (64, 64),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': np.random.choice([0.001, 0.01]),
+                     'tau': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 2,
                      'd_ent_reg_scale': 0.,
@@ -380,8 +377,7 @@ def get_rand_hps(args, meta):
                      'd_lr': 3e-4,
                      'clip_norm': 5.,
                      'noise_type': np.random.choice(['"adaptive-param_0.2"',
-                                                     '"adaptive-param_0.2, ou_0.2"',
-                                                     '"adaptive-param_0.2, ou_0.2, normal_0.2"']),
+                                                     '"adaptive-param_0.2, ou_0.2"']),
                      'rew_aug_coeff': 0.,
                      'param_noise_adaption_frequency': 40,
                      'gamma': np.random.choice([0.98, 0.99, 0.995]),
@@ -397,7 +393,7 @@ def get_rand_hps(args, meta):
                      'td_loss_n_scale': 1.,
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
-                     'n': np.random.choice([10, 20, 40, 60])}
+                     'n': np.random.choice([36, 72, 96])}
             return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
                     for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
@@ -451,7 +447,6 @@ def get_spectrum_hps(args, meta, max_seed):
         # Imitator
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -460,7 +455,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
-                     'batch_size': 64,
+                     'batch_size': 128,
                      'sample_or_mode': 1,
                      'g_steps': 3,
                      'd_steps': 1,
@@ -490,7 +485,6 @@ def get_spectrum_hps(args, meta, max_seed):
                       for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -498,11 +492,11 @@ def get_spectrum_hps(args, meta, max_seed):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 20,
+                     'training_steps_per_iter': 40,
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
-                     'batch_size': 16,
+                     'batch_size': 256,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -516,7 +510,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'd_hid_widths': (128,),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': 0.001,
+                     'tau': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -581,7 +575,6 @@ def get_spectrum_hps(args, meta, max_seed):
         # Imitator
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 0,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -590,7 +583,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
                      'timesteps_per_batch': 1024,
-                     'batch_size': 64,
+                     'batch_size': 128,
                      'sample_or_mode': 1,
                      'g_steps': 3,
                      'd_steps': 1,
@@ -614,7 +607,6 @@ def get_spectrum_hps(args, meta, max_seed):
                       for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -622,11 +614,11 @@ def get_spectrum_hps(args, meta, max_seed):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 20,
+                     'training_steps_per_iter': 40,
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
-                     'batch_size': 32,
+                     'batch_size': 256,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -634,7 +626,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'd_hid_widths': (64, 64),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': 0.001,
+                     'tau': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 2,
                      'd_ent_reg_scale': 0.,
@@ -669,11 +661,11 @@ def get_spectrum_hps(args, meta, max_seed):
     else:
         raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
 
-    # Duplicate every hyperparameter map of the list to span the range of seeds
-    output = [dup_hps_for_seed(hpmap, seed)
-              for seed in range(max_seed)
-              for hpmap in hpmaps]
     if args.task in ['gail', 'sam']:
+        # Duplicate every hyperparameter map of the list to span the range of seeds
+        output = [dup_hps_for_seed(hpmap, seed)
+                  for seed in range(max_seed)
+                  for hpmap in hpmaps]
         # Duplicate every hyperparameter map of the list to span the range of num of demos
         output = [dup_hps_for_num_demos(hpmap, num_demos)
                   for num_demos in NUM_DEMOS_SET
