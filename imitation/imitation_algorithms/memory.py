@@ -244,30 +244,25 @@ class PrioritizedRB(RB):
         to the height of said block. The height being the priority value, the higher the
         priority, the higher the prob of being selected.
         """
-        factor = 5  # XXX: hyperparam?
-        assert factor > 1
         assert self.num_entries
 
         transition_idxs = []
         # Sum the priorities of the transitions currently in the buffer
-        p_total = self.sum_st.sum(end=self.num_entries)
-        # `start` is 0 by default, `end` is length - 1 (classic python)
-        # Ensure no repeats once the number of memory entries is high enough
-        no_repeats = self.num_entries > factor * batch_size
-
-        # Sample `batch_size` samples independently
-        for _ in range(batch_size):
-            while True:
-                # Sample a value uniformly from the unit interval
-                unit_u_sample = random.random()  # ~U[0,1]
-                # Scale the sampled value to the total sum of priorities
-                u_sample = unit_u_sample * p_total
-                # Retrieve the transition index associated with `u_sample`
-                # i.e. in which block the sample landed
-                transition_idx = self.sum_st.find_prefixsum_idx(u_sample)
-                if not no_repeats or transition_idx not in transition_idxs:
-                    transition_idxs.append(transition_idx)
-                    break
+        p_total = self.sum_st.sum(end=self.num_entries - 1)
+        # `start` is 0 by default, `end` is length - 1
+        # Divide equally into `batch_size` ranges (appendix B.2.1)
+        p_pieces = p_total / batch_size
+        # Sample `batch_size` samples independently, each from within the associated range
+        # which is referred to as 'stratified sampling'
+        for i in range(batch_size):
+            # Sample a value uniformly from the unit interval
+            unit_u_sample = random.random()  # ~U[0,1]
+            # Scale and shift the sampled value to be within the range of cummulative priorities
+            u_sample = (unit_u_sample * p_pieces) + (i * p_pieces)
+            # Retrieve the transition index associated with `u_sample`
+            # i.e. in which block the sample landed
+            transition_idx = self.sum_st.find_prefixsum_idx(u_sample)
+            transition_idxs.append(transition_idx)
         return np.array(transition_idxs)
 
     def _sample(self, batch_size, sampling_fn):
