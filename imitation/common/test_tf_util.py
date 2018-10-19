@@ -4,7 +4,7 @@ from imitation.common.tf_util import function, initialize, single_threaded_sessi
 
 
 def test_function():
-    """Test Tensorflow implementation of Theano's `function`"""
+    """Test TensorFlow implementation of Theano's 'function'"""
     tf.reset_default_graph()
     x = tf.placeholder(tf.int32, (), name="x")
     y = tf.placeholder(tf.int32, (), name="y")
@@ -17,7 +17,7 @@ def test_function():
 
 
 def test_multi_scope_function():
-    """Test Tensorflow implementation of Theano's `function`
+    """Test TensorFlow implementation of Theano's 'function'
     when variables are from different variable scopes.
     """
     tf.reset_default_graph()

@@ -2,7 +2,10 @@ import numpy as np
 
 
 class RunningMeanStd(object):
-    # https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+    """Compute running mean and std and use them to normalise the samples sequentially collected
+    https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+    """
+
     def __init__(self, epsilon=1e-4, shape=()):
         self.mean = np.zeros(shape, 'float64')
         self.var = np.ones(shape, 'float64')
@@ -29,19 +32,3 @@ class RunningMeanStd(object):
         self.mean = new_mean
         self.var = new_var
         self.count = new_count
-
-
-def test_runningmeanstd():
-    for (x1, x2, x3) in [(np.random.randn(3), np.random.randn(4), np.random.randn(5)),
-                         (np.random.randn(3, 2), np.random.randn(4, 2), np.random.randn(5, 2))]:
-
-        rms = RunningMeanStd(epsilon=0.0, shape=x1.shape[1:])
-
-        x = np.concatenate([x1, x2, x3], axis=0)
-        ms1 = [x.mean(axis=0), x.var(axis=0)]
-        rms.update(x1)
-        rms.update(x2)
-        rms.update(x3)
-        ms2 = [rms.mean, rms.var]
-
-        assert np.allclose(ms1, ms2)

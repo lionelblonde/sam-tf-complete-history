@@ -7,8 +7,6 @@ from time import time
 
 class FileLogger:
     """Log to a directory
-    `log_def`: definition of the logging {'log_name1': [keys], 'log_name2': [keys], ...}
-    `source_list`: a list of files to save to the results directory
 
     Example usage:
         logger = FileLogger({

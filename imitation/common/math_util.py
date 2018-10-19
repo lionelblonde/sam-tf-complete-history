@@ -14,6 +14,10 @@ def discount(x, gamma):
     Return an ndarray `y` with the same shape as x, satisfying:
         y[t] = x[t] + gamma * x[t+1] + gamma^2 * x[t+2] + ... + gamma^k * x[t+k],
             where k = len(x) - t - 1
+
+    Args:
+        x (np.ndarray): 2-D array of floats, time x features
+        gamma (float): Discount factor
     """
     assert x.ndim >= 1
     return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
@@ -23,9 +27,11 @@ def augment_segment_gae_stats(segment, gamma, lam, rew_key):
     """'Generalized Advantage Estimation' (GAE)
     Schulman, ICLR 2016, https://arxiv.org/abs/1506.02438
 
-    `segment`: collected segment of transitions (>< episode)
-    `gamma`: discount factor, same letter in the GAE paper
-    `lam`: GAE parameter, `lambda` in the GAE paper
+    Args:
+        segment (dict): Collected segment of transitions (>< episode)
+        gamma (float): Discount factor, same letter in the GAE paper
+        lam (float): GAE parameter, 'lambda' in the GAE paper
+        rew_key (str): Key associated with the reward entity
     """
     # Extract segment length
     length = len(segment[rew_key])
@@ -99,9 +105,9 @@ def explained_variance(ypred, y):
     Returns 1 - Var[y-ypred] / Var[y]
 
     Interpretation:
-        - ev=0 => might as well have predicted zero
-        - ev=1 => perfect prediciton
-        - ev<0 => worse than just predicting zero
+        ev=0 => might as well have predicted zero
+        ev=1 => perfect prediciton
+        ev<0 => worse than just predicting zero
     """
     assert y.ndim == 1 and ypred.ndim == 1
     vary = np.var(y)
@@ -142,25 +148,20 @@ def unflatten_vector(vec, shapes):
     return arrs
 
 
-def discount_with_boundaries(X, new, gamma):
-    """X: 2-D array of floats, time x features
-    new: 2-D array of bools, indicating when a new episode has started
+def discount_with_boundaries(x, ep_starts, gamma):
+    """Compute discounted sum along the 0-th dimension of the `x` ndarray,
+    while taking into account the start of each episode.
+    Return an ndarray `y` with the same shape as x, satisfying:
+        y[t] = x[t] + gamma * x[t+1] + gamma^2 * x[t+2] + ... + gamma^k * x[t+k],
+            where k = len(x) - t - 1
+    Args:
+        x (np.ndarray): 2-D array of floats, time x features
+        ep_starts (np.ndarray): 2-D array of bools, indicating when a new episode has started
+        gamma (float): Discount factor
     """
-    Y = np.zeros_like(X)
-    T = X.shape[0]
-    Y[T - 1] = X[T - 1]
-    for t in range(T - 2, -1, -1):
-        Y[t] = X[t] + gamma * Y[t + 1] * (1 - new[t + 1])
-    return Y
-
-
-def test_discount_with_boundaries():
-    gamma = 0.9
-    x = np.array([1.0, 2.0, 3.0, 4.0], 'float32')
-    starts = [1.0, 0.0, 0.0, 1.0]
-    y = discount_with_boundaries(x, starts, gamma)
-    assert np.allclose(y, [
-                       1 + gamma * 2 + gamma**2 * 3,
-                       2 + gamma * 3,
-                       3,
-                       4])
+    y = np.zeros_like(x)
+    horizon = x.shape[0]
+    y[horizon - 1] = x[horizon - 1]
+    for t in range(horizon - 2, -1, -1):
+        y[t] = x[t] + gamma * y[t + 1] * (1 - ep_starts[t + 1])
+    return y

@@ -18,11 +18,10 @@ def cell(x, width):
 def columnize(names, tuples, widths, indent=2):
     """Generate and return the content of table
     (w/o logging or printing anything)
-    Parameters
-        - width: int
-          width of each cell in the table
-        - indent: int
-          indentation spacing prepended to every row in the table
+
+    Args:
+        width (int): Width of each cell in the table
+        indent (int): Indentation spacing prepended to every row in the table
     """
     indent_space = indent * ' '
     # Add row containing the names

@@ -4,9 +4,7 @@ from tensorflow.python.ops import math_ops
 
 
 class Pd(object):
-    """
-    A particular probability distribution
-    """
+    """Probability distribution"""
 
     def flatparam(self):
         raise NotImplementedError
@@ -32,9 +30,7 @@ class Pd(object):
 
 
 class PdType(object):
-    """
-    Parametrized family of probability distributions
-    """
+    """Parametrized family of probability distributions"""
 
     def pdclass(self):
         raise NotImplementedError
@@ -142,9 +138,9 @@ class CategoricalPd(Pd):
         return tf.argmax(self.logits, axis=-1)
 
     def neglogp(self, x):
-        """return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.logits, labels=x)
-        Note: we can't use sparse_softmax_cross_entropy_with_logits because
-              the implementation does not allow second-order derivatives...
+        """Return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.logits, labels=x)
+        Note that we can't use sparse_softmax_cross_entropy_with_logits because the implementation
+        does not allow second-order derivatives...
         """
         one_hot_actions = tf.one_hot(x, self.logits.get_shape().as_list()[-1])
         return tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits,
@@ -201,12 +197,14 @@ class CategoricalPd(Pd):
 
         def gumbel_softmax(logits, temperature, hard=True):
             """Sample from the Gumbel-Softmax distribution and optionally discretize.
+
             Args:
-                logits: [batch_size, n_class] unnormalized log-probs
-                temperature: non-negative scalar
-                hard: if True, take argmax, but differentiate w.r.t. soft sample y
+                logits (Tensor): Unnormalized log-probs
+                temperature (float): Temperature
+                hard (bool): If True, take argmax, but differentiate w.r.t. soft sample y
+
             Returns:
-                [batch_size, n_class] sample from the Gumbel-Softmax distribution.
+                Tensor corresponding to a sample from the Gumbel-Softmax distribution.
                 If hard=True, then the returned sample will be one-hot, otherwise it will
                 be a probabilitiy distribution that sums to 1 across classes
             """

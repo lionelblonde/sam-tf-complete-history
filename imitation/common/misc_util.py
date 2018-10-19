@@ -5,8 +5,9 @@ import numpy as np
 
 
 def onehotify(targets, num_dims):
-    """Transforms an array of discrete actions
+    """Transform an array of discrete actions
     into an array containing their hot encodings
+
     Example:
         action `2` or `2.`, with a total of 4 possible actions -> [0., 0., 1., 0.] (1-dim array)
     """
@@ -40,8 +41,10 @@ def zipsame(*seqs):
 def unpack(seq, sizes):
     """Unpack `seq` into a sequence of lists, with lengths specified by `sizes`.
     `None` in `sizes` means just one bare element, not a list.
+
     Example:
         unpack([1, 2, 3, 4, 5, 6], [3, None, 2]) -> ([1, 2, 3], 4, [5, 6])
+
     Technically `upack` returns a generator object, i.e. an iterator over ([1, 2, 3], 4, [5, 6])
     """
     seq = list(seq)
@@ -72,7 +75,9 @@ def set_global_seeds(i):
 
 def prettify_time(seconds):
     """Print the number of seconds in human-readable format.
-    Examples: '2 days', '2 hours and 37 minutes', 'less than a minute'.
+
+    Examples:
+        '2 days', '2 hours and 37 minutes', 'less than a minute'.
     """
     minutes = seconds // 60
     seconds %= 60
@@ -103,15 +108,13 @@ def prettify_time(seconds):
 
 def boolean_flag(parser, name, default=False, help=None):
     """Add a boolean flag to argparse parser.
-    Parameters
-        - parser: argparse.Parser
-          parser to add the flag to
-        - name: str
+
+    Args:
+        parser (argparse.Parser): Parser to add the flag to
+        name (str): Name of the flag
           --<name> will enable the flag, while --no-<name> will disable it
-        - default: bool or None
-          default value of the flag
-        - help: str
-          help string for the flag
+        default (bool or None): Default value of the flag
+        help (str): Help string for the flag
     """
     dest = name.replace('-', '_')
     parser.add_argument("--" + name, action="store_true", default=default, dest=dest, help=help)
@@ -121,11 +124,10 @@ def boolean_flag(parser, name, default=False, help=None):
 def get_wrapper_by_name(env, classname):
     """Given an a gym environment possibly wrapped multiple times, return a gym.Wrapper
     of class named 'classname' or raises ValueError if no such wrapper was applied.
-    Parameters
-        - env: gym.Env of gym.Wrapper
-          gym environment
-        - classname: str
-          name of the wrapper
+
+    Args:
+        env (gym.Env of gym.Wrapper): Gym environment
+        classname (str): Name of the wrapper
     """
     currentenv = env
     while True:

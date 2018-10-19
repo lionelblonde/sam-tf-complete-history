@@ -9,13 +9,13 @@ class SegmentTree(object):
             1) setting item's value is slightly slower (O(log capacity) instead of O(1))
             2) user has access to an efficient `reduce` operation which reduces `operation`
                over a contiguous subsequence of items in the array.
-        Parameters
-            - capacity: int
-              Total size of the array - must be a power of two
-            - op: lambda obj, obj -> obj
-              internal operation of a mathematical group for combining elements (e.g. sum, max)
-            - neutral_element: obj
-              neutral element for the operation above. e.g. float('-inf') for max and 0 for sum
+
+        Args:
+            capacity (int): Total size of the array - must be a power of two
+            op (lambda obj, obj -> obj): Internal operation of a mathematical group for
+                combining elements (e.g. sum, max)
+            neutral_element (obj): Neutral element for the operation above.
+                (e.g. float('-inf') for max and 0 for sum)
         """
         assert capacity > 0 and capacity & (capacity - 1) == 0, "capacity must be positive and \
                                                                  a power of 2."
@@ -39,12 +39,11 @@ class SegmentTree(object):
                 )
 
     def reduce(self, start=0, end=None):
-        """Returns result of applying `self._operation` to a contiguous subsequence of the array.
-        Parameters
-            - start: int
-              beginning of the subsequences
-            - end: int
-              end of the subsequences
+        """Return result of applying `self._operation` to a contiguous subsequence of the array.
+
+        Args:
+            start (int): beginning of the subsequences
+            end (int): end of the subsequences
         """
         if end is None:
             end = self._capacity
@@ -54,7 +53,6 @@ class SegmentTree(object):
         return self._reduce_helper(start, end, 1, 0, self._capacity - 1)
 
     def __setitem__(self, idx, val):
-        # index of the leaf
         idx += self._capacity
         self._value[idx] = val
         idx //= 2
@@ -78,7 +76,7 @@ class SumSegmentTree(SegmentTree):
                                              neutral_element=0.0)
 
     def sum(self, start=0, end=None):
-        """Returns arr[start] + ... + arr[end]"""
+        """Return arr[start] + ... + arr[end]"""
         return super(SumSegmentTree, self).reduce(start, end)
 
     def find_prefixsum_idx(self, prefixsum):
@@ -107,5 +105,5 @@ class MinSegmentTree(SegmentTree):
                                              neutral_element=float('inf'))
 
     def min(self, start=0, end=None):
-        """Returns min(arr[start], ...,  arr[end])"""
+        """Return min(arr[start], ...,  arr[end])"""
         return super(MinSegmentTree, self).reduce(start, end)

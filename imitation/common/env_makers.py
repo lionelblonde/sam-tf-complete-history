@@ -14,7 +14,7 @@ MUJOCO_ENV_NAMES = ['InvertedPendulum', 'InvertedDoublePendulum', 'Reacher',
 ATARI_ENV_NAMES = ['FrostbiteNoFrameskip', 'BreakoutNoFrameskip', 'AlienNoFrameskip',
                    'MsPacmanNoFrameskip', 'MontezumaRevengeNoFrameskip', 'PongNoFrameskip',
                    'PitfallNoFrameskip', 'QbertNoFrameskip', 'SeaquestNoFrameskip',
-                   'SolarisNoFrameskip', 'WizardOfWorNoFrameskip']
+                   'SolarisNoFrameskip', 'WizardOfWorNoFrameskip', 'SpaceInvadersNoFrameskip']
 
 
 def assert_admissibility(env_id):
@@ -60,7 +60,7 @@ def make_atari_env(env_id, seed, name, horizon=None, allow_early_resets=False):
 
 
 def make_env(args):
-    """Applies the proper wrapper based on args content"""
+    """Apply the proper wrapper based on args content"""
     env_id_stem = args.env_id.split('-')[0]
     if env_id_stem in MUJOCO_ENV_NAMES:
         _make_env = make_mujoco_env

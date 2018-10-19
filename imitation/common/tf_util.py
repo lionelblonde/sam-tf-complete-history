@@ -11,10 +11,10 @@ from imitation.common import logger
 
 
 def function(inputs, outputs, updates=None, givens=None):
-    """Just like Theano function. Take a bunch of tensorflow placeholders and expressions
-    computed based on those placeholders and produces f(inputs) -> outputs. Function f takes
-    values to be fed to the input's placeholders and produces the values of the expressions
-    in outputs.
+    """Port Theano's 'function' to TensorFlow.
+    Take a bunch of TensorFlow placeholders and expressions computed based on those placeholders
+    and produces f(inputs) -> outputs. Function f takes values to be fed to the input's
+    placeholders and produces the values of the expressions in outputs.
 
     Input values can be passed in the same order as inputs or can be provided as kwargs based
     on placeholder name (passed to constructor or accessible via placeholder.op.name).
@@ -24,33 +24,35 @@ def function(inputs, outputs, updates=None, givens=None):
         y = tf.placeholder(tf.int32, (), name="y")
         z = 3 * x + 2 * y
         lin = function([x, y], z, givens={y: 0})
-
         with single_threaded_session():
             initialize()
-
             assert lin(2) == 6
             assert lin(x=3) == 9
             assert lin(2, 2) == 10
             assert lin(x=2, y=3) == 12
 
-    Parameters:
-        - inputs: [tf.placeholder, tf.constant, or object with make_feed_dict method]
-            list of input arguments
-        - outputs: [tf.Variable] or tf.Variable
-            list of outputs or a single output to be returned from the function.
+    Args:
+        inputs (TensorFlow Tensor or Object with make_feed_dict): List of input tensors of type
+            tf.placeholder, tf.constant or more generally any object with `make_feed_dict method`.
+        outputs (TensorFlow Tensor): list of output tensors or a single output tensor of type(s)
+            tf.Variable to be returned from the function.
             Returned value will also have the same shape.
+        updates (list): List of TensorFlow operations
+        givens (dict): Values already know for some or all of the input Tensors
     """
     if isinstance(outputs, list):
-        return _Function(inputs, outputs, updates, givens=givens)
+        return _TheanoFunction(inputs, outputs, updates, givens=givens)
     elif isinstance(outputs, (dict, collections.OrderedDict)):
-        f = _Function(inputs, outputs.values(), updates, givens=givens)
+        f = _TheanoFunction(inputs, outputs.values(), updates, givens=givens)
         return lambda *args, **kwargs: type(outputs)(zip(outputs.keys(), f(*args, **kwargs)))
     else:
-        f = _Function(inputs, [outputs], updates, givens=givens)
+        f = _TheanoFunction(inputs, [outputs], updates, givens=givens)
         return lambda *args, **kwargs: f(*args, **kwargs)[0]
 
 
-class _Function(object):
+class _TheanoFunction(object):
+    """Theano's 'function' core"""
+
     def __init__(self, inputs, outputs, updates, givens):
         for inpt in inputs:
             fmtbool = type(inpt) is tf.Tensor and len(inpt.op.inputs) == 0
@@ -83,7 +85,7 @@ class _Function(object):
 
 
 def switch(condition, then_expression, else_expression):
-    """Switches between two operations depending on a scalar value (int or bool).
+    """Switch between two operations depending on a scalar value (int or bool).
     Note that both `then_expression` and `else_expression` should be symbolic
     tensors of the *same shape*.
 
@@ -177,11 +179,9 @@ def huber_loss(x, delta=1.0, name='huber_loss'):
     Reference: https://en.wikipedia.org/wiki/Huber_loss
     """
     with tf.variable_scope(name):
-        return tf.where(
-            tf.abs(x) < delta,
-            0.5 * tf.square(x),
-            delta * (tf.abs(x) - 0.5 * delta)
-        )
+        return tf.where(tf.abs(x) < delta,
+                        0.5 * tf.square(x),
+                        delta * (tf.abs(x) - 0.5 * delta))
 
 
 def logit_bernoulli_entropy(logits):

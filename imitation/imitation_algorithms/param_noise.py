@@ -4,11 +4,11 @@ class AdaptiveParamNoise(object):
         """Adaptive parameter noise, as introduced in the paper
         'Parameter Space Noise for Exploration'
         Matthias Plappert, https://arxiv.org/abs/1706.01905
-        Parameters:
-            `initial_std`: initial parameter noise standard deviation
-            `delta`: threshold used in the adaptive noise scaling heuristic
+
+        Args:
+            initial_std (float): Initial parameter noise standard deviation
+            delta (float): Threshold used in the adaptive noise scaling heuristic
         """
-        # Parameters
         self.initial_std = initial_std
         self.delta = delta
         # Initialize the current standard deviation

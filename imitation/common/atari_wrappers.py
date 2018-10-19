@@ -69,7 +69,7 @@ class EpisodicLifeEnv(gym.Wrapper):
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
         self.was_real_done = done
-        # check current lives, make loss of life terminal,
+        # Check current lives, make loss of life terminal,
         # then update lives to handle bonus lives
         lives = self.env.unwrapped.ale.lives()
         if lives < self.lives and lives > 0:
@@ -154,11 +154,11 @@ class FrameStack(gym.Wrapper):
     def __init__(self, env, k):
         """Stack k last frames.
 
-        Returns lazy array, which is much more memory efficient.
+        Returns:
+            Lazy array, which is much more memory efficient.
 
-        See Also
-        --------
-        baselines.common.atari_wrappers.LazyFrames
+        See Also:
+            baselines.common.atari_wrappers.LazyFrames
         """
         gym.Wrapper.__init__(self, env)
         self.k = k
@@ -189,7 +189,7 @@ class ScaledFloatFrame(gym.ObservationWrapper):
         gym.ObservationWrapper.__init__(self, env)
 
     def observation(self, observation):
-        # careful! This undoes the memory optimization, use
+        # Careful! This undoes the memory optimization, use
         # with smaller replay buffers only.
         return np.array(observation).astype(np.float32) / 255.0
 
@@ -202,7 +202,8 @@ class LazyFrames(object):
 
         This object should only be converted to numpy array before being passed to the model.
 
-        You'd not believe how complex the previous solution was."""
+        You'd not believe how complex the previous solution was.
+        """
         self._frames = frames
         self._out = None
 
