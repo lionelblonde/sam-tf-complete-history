@@ -3,7 +3,7 @@
 
 cd ../..
 
-mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
+mpirun -np $1 --bind-to core python -m imitation.imitation_algorithms.run_sam \
     --note="" \
     --env_id=$2 \
     --no-from_raw_pixels \
@@ -16,11 +16,11 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --rmsify_obs \
     --save_frequency=100 \
     --num_timesteps=10000000 \
-    --training_steps_per_iter=40 \
+    --training_steps_per_iter=25 \
     --eval_steps_per_iter=10 \
     --no-render \
     --timesteps_per_batch=4 \
-    --batch_size=256 \
+    --batch_size=64 \
     --num_demos=$4 \
     --g_steps=3 \
     --d_steps=1 \
@@ -51,6 +51,7 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_sam \
     --alpha=0.3 \
     --beta=1. \
     --no-ranked \
+    --reset_with_demos \
     --no-add_demos_to_mem \
     --no-unreal \
     --q_loss_scale=1. \

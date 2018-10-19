@@ -9,7 +9,6 @@ import numpy as np
 
 from imitation.common import tf_util as U
 from imitation.common import logger
-from imitation.common.feeder import Feeder
 from imitation.common.misc_util import zipsame
 from imitation.common.math_util import meanv
 from imitation.common.console_util import timed_cm_wrapper, pretty_iter, pretty_elapsed, columnize
@@ -18,7 +17,18 @@ from imitation.common.summary_util import CustomSummary
 from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce, mpi_moments
 
 
-def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff):
+def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, expert_dataset, rank):
+
+    def reset_with_demos_():
+        """Get an observation from expert demos"""
+        ob_, _ = expert_dataset.get_next_pair_batch(batch_size=1)
+        ob_ = ob_[0]
+        if hasattr(env, 'k'):
+            # Environment wrapped with 'FrameStack' wrapper
+            # Repeat the observation `k` times
+            ob_ = np.repeat(ob_, env.k, axis=-1)
+        return ob_
+
     t = 0
     ac = env.action_space.sample()
     done = True
@@ -26,6 +36,10 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff):
     env_rew = 0.0
     mu.reset_noise()
     ob = env.reset()
+    if expert_dataset is not None:
+        logger.info("o/")
+        # Override with an observation from expert demos
+        ob = reset_with_demos_()
     cur_ep_len = 0
     cur_ep_syn_ret = 0
     cur_ep_env_ret = 0
@@ -79,6 +93,9 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff):
             cur_ep_env_ret = 0
             mu.reset_noise()
             ob = env.reset()
+            if expert_dataset is not None:
+                # Override with an observation from expert demos
+                ob = reset_with_demos_()
         t += 1
 
 
@@ -196,6 +213,7 @@ def learn(comm,
           ckpt_dir,
           summary_dir,
           expert_dataset,
+          reset_with_demos,
           add_demos_to_mem,
           save_frequency,
           d_lr,
@@ -203,6 +221,7 @@ def learn(comm,
           param_noise_adaption_frequency,
           timesteps_per_batch,
           batch_size,
+          window,
           g_steps,
           d_steps,
           training_steps_per_iter,
@@ -273,7 +292,9 @@ def learn(comm,
 
     # Create segment generator for training the agent
     assert 0 <= rew_aug_coeff <= 1
-    seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff)
+    _expert_dataset = expert_dataset if reset_with_demos else None
+    seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch,
+                                     rew_aug_coeff, _expert_dataset, rank)
     if eval_env is not None:
         # Create episode generator for evaluating the agent
         eval_ep_gen = traj_ep_generator(eval_env, mu, d, render)
@@ -341,11 +362,14 @@ def learn(comm,
         pretty_iter(logger, iters_so_far)
         pretty_elapsed(logger, tstart)
 
+        # Make non-zero-rank workers wait for rank zero
+        comm.Barrier()
+
         # Sample mini-batch in env w/ perturbed actor and store transitions
         with timed("sampling mini-batch"):
             seg = seg_gen.__next__()
         # Extend deques with collected experiental data
-        obs, acs, qs = seg['obs'], seg['acs'], seg['qs']
+        acs, qs = seg['acs'], seg['qs']
         lens, syn_rets, env_rets = seg['ep_lens'], seg['ep_syn_rets'], seg['ep_env_rets']
         ac_buffer.extend(acs)
         q_buffer.extend(qs)
@@ -361,20 +385,23 @@ def learn(comm,
                 # Update disciminator
                 logger.info("  updating d [{}/{}]".format(d_step + 1, d_steps))
 
-                # Train d with Feeder on the most recently collected data + expert data
-                # Create Feeder object to iterate over (ob, ret) pairs
-                feeder = Feeder(data_map=dict(obs=obs, acs=acs), enable_shuffle=True)
-                for minibatch in feeder.get_feed(batch_size=batch_size):
+                if window is not None:
+                    # --[Train d on recent pairs sampled from the replay buffer]--
+                    # Collect recent pairs uniformly from the experience replay buffer
+                    assert window > batch_size, "must have window > batch_size"
+                    xp_batch = mu.replay_buffer.sample_recent(batch_size=batch_size,
+                                                              window=window)
                     # Update discriminator w/ most recently collected samples & expert dataset
-                    ob_pol, ac_pol = minibatch['obs'], minibatch['acs']
+                    ob_pol, ac_pol = xp_batch['obs0'], xp_batch['acs']
                     # Collect expert data w/ identical batch size (GAN's equal mixture)
                     ob_exp, ac_exp = expert_dataset.get_next_pair_batch(batch_size=len(ob_pol))
 
-                    if isinstance(env.action_space, spaces.Discrete):
-                        # Expand dimension for discete actions envs
-                        ac_pol = np.expand_dims(ac_pol, axis=-1)
+                    if hasattr(env, 'k'):
+                        # Environment wrapped with 'FrameStack' wrapper
+                        # Repeat the observation `k` times
+                        ob_exp = np.repeat(ob_exp, env.k, axis=-1)
 
-                    assert len(ob_exp) == len(ob_pol)
+                    assert len(ob_exp) == len(ob_pol), "length mismatch"
 
                     # Update running mean and std on states
                     if hasattr(d, "obs_rms"):
@@ -388,17 +415,26 @@ def learn(comm,
                     # Store the losses and gradients in their respective deques
                     d_grads_buffer.append(grads)
                     d_losses_buffer.append(new_losses)
-
                     # Assess consistency of accuracies
                     assert d.assert_acc_consistency(ob_pol, ac_pol, ob_exp, ac_exp)
 
-                # Train d on data from the replay buffer (might be old might be new) + expert data
-                # Collect generated data from experience replay buffer
-                xp_batch = mu.replay_buffer.sample(batch_size=batch_size)
-                ob_pol_, ac_pol_ = xp_batch['obs0'], xp_batch['acs']
-
+                # --[Train d on pairs sampled from the replay buffer]--
+                # Collect pairs uniformly from the experience replay buffer
+                sample_ = mu.replay_buffer.sample
+                if hasattr(mu.replay_buffer, 'sample_uniform'):
+                    # Executed iff prioritization is used, for which `sample` is overridden
+                    sample_ = mu.replay_buffer.sample_uniform
+                xp_batch_ = sample_(batch_size=batch_size)
+                ob_pol_, ac_pol_ = xp_batch_['obs0'], xp_batch_['acs']
                 # Collect expert data w/ identical batch size (GAN's equal mixture)
                 ob_exp_, ac_exp_ = expert_dataset.get_next_pair_batch(batch_size=batch_size)
+
+                if hasattr(env, 'k'):
+                    # Environment wrapped with 'FrameStack' wrapper
+                    # Repeat the observation `k` times
+                    ob_exp_ = np.repeat(ob_exp_, env.k, axis=-1)
+
+                assert len(ob_exp_) == len(ob_pol_), "length mismatch"
 
                 # Update running mean and std on states
                 if hasattr(d, "obs_rms"):
@@ -412,7 +448,6 @@ def learn(comm,
                 # Store the losses and gradients in their respective deques
                 d_grads_buffer.append(grads)
                 d_losses_buffer.append(new_losses)
-
                 # Assess consistency of accuracies
                 assert d.assert_acc_consistency(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
 
@@ -462,7 +497,7 @@ def learn(comm,
                 eval_syn_ret_buffer.append(eval_syn_ret)
                 eval_env_ret_buffer.append(eval_env_ret)
 
-        # Make non-zero-rank workers wait for rank zero to finish the eval
+        # Make non-zero-rank workers wait for rank zero
         comm.Barrier()
 
         # Log statistics

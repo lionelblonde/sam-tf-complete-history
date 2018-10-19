@@ -3,7 +3,7 @@
 
 cd ../..
 
-mpirun -np $1 python -m imitation.imitation_algorithms.run_gail \
+mpirun -np $1 --bind-to core python -m imitation.imitation_algorithms.run_gail \
     --note="" \
     --env_id=$2 \
     --from_raw_pixels \
@@ -17,7 +17,7 @@ mpirun -np $1 python -m imitation.imitation_algorithms.run_gail \
     --save_frequency=100 \
     --num_timesteps=10000000 \
     --timesteps_per_batch=1024 \
-    --batch_size=64 \
+    --batch_size=128 \
     --sample_or_mode \
     --num_demos=$4 \
     --g_steps=3 \

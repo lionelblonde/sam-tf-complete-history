@@ -91,6 +91,24 @@ class RB(object):
         transitions = self.batchify(idxs)
         return transitions
 
+    def sample_recent(self, batch_size, window):
+        """Sample transitions from the most recent ones
+        `window_width` designates how far we go back in time
+        """
+        width = window if window <= self.num_entries else self.num_entries
+        # Extract the indices of the 'width' most recent entries
+        idxs = np.ones(width) * self.latest_entry_idx
+        idxs -= np.arange(start=width - 1, stop=-1, step=-1)
+        idxs += self.limit
+        idxs %= self.limit
+        idxs = idxs.astype(int)
+        assert len(idxs) == width
+        # Subsample from the isolated indices
+        idxs = np.random.choice(idxs, size=batch_size)
+        # Collect the transitions associated w/ the sampled indices from the replay buffer
+        transitions = self.batchify(idxs)
+        return transitions
+
     def lookahead(self, transitions, n, gamma):
         """Perform n-step TD lookahead estimations starting from every transition"""
         global debug
@@ -129,7 +147,7 @@ class RB(object):
             lookahead_batch['td_len'].append(td_len)
 
             if debug:
-                print("########## 0 ##########")
+                print("--[start debug message]--")
                 print("index in lookahead: {}".format(idx))
                 print("td end index: {}".format(lookahead_end_idx))
                 print("td indices: {}".format(lookahead_idxs))
@@ -139,7 +157,7 @@ class RB(object):
                 print("td len: {}".format(td_len))
                 print("td rews: {}".format(lookahead_rews))
                 print("td disc sum rews: {}".format(lookahead_discounted_sum_n_rews))
-                print("########## 1 ##########")
+                print("--[end debug message]--")
 
         # Wrap every value w/ `array_min2d`
         lookahead_batch = {k: array_min2d(v) for k, v in lookahead_batch.items()}
@@ -183,7 +201,7 @@ class RB(object):
         return fmt.format(self.limit, self.ob_shape, self.ac_shape)
 
     @property
-    def next_entry_index(self):
+    def latest_entry_idx(self):
         # Since all the functions do exactly the same for every RingBuffer, pick arbitrarily
         pick = self.ring_buffers['obs0']
         return (pick.start + pick.length - 1) % pick.maxlen
@@ -298,6 +316,9 @@ class PrioritizedRB(RB):
     def sample(self, batch_size):
         return self._sample(batch_size, self._sample_w_priorities)
 
+    def sample_uniform(self, batch_size):
+        return super().sample(batch_size=batch_size)
+
     def n_step_lookahead_sample(self, batch_size, n, gamma):
         """Sample from the replay buffer according to assigned priorities.
         This function is for n-step TD backups, where n > 1
@@ -314,7 +335,7 @@ class PrioritizedRB(RB):
 
     def append(self, *args, **kwargs):
         super().append(*args, **kwargs)
-        idx = self.next_entry_index
+        idx = self.latest_entry_idx
         # Assign highest priority value to newly added elements (line 6 alg PER paper)
         self.sum_st[idx] = self.max_priority ** self.alpha
         self.min_st[idx] = self.max_priority ** self.alpha
@@ -431,7 +452,7 @@ class UnrealRB(PrioritizedRB):
 
     def append(self, *args, **kwargs):
         super().append(*args, **kwargs)
-        idx = self.next_entry_index
+        idx = self.latest_entry_idx
         # Add newly added elements to 'good' and 'bad' virtual sub-buffer
         self.b_sum_st[idx] = 1
         self.g_sum_st[idx] = 1

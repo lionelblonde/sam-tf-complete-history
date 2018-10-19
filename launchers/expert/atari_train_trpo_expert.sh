@@ -3,7 +3,7 @@
 
 cd ../..
 
-mpirun -np $1 python -m imitation.expert_algorithms.run_xpo_expert \
+mpirun -np $1 --bind-to core python -m imitation.expert_algorithms.run_xpo_expert \
     --note="" \
     --env_id=$2 \
     --from_raw_pixels \

@@ -242,6 +242,8 @@ def sam_argparser(description="SAM Experiment"):
     parser.add_argument('--timesteps_per_batch', help='number of interactions per iteration',
                         type=int, default=16)
     parser.add_argument('--batch_size', help='minibatch size', type=int, default=32)
+    parser.add_argument('--window', help='window size for optional d training on recent data',
+                        type=int, default=None)
     boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
     parser.add_argument('--num_trajs', help='number of trajectories to evaluate/gather',
                         type=int, default=10)
@@ -282,6 +284,7 @@ def sam_argparser(description="SAM Experiment"):
     boolean_flag(parser, 'rmsify_obs', default=True)
     parser.add_argument('--gamma', help='discount factor', type=float, default=0.995)
     parser.add_argument('--mem_size', type=int, default=int(1e6))
+    boolean_flag(parser, 'reset_with_demos', default=False)
     boolean_flag(parser, 'add_demos_to_mem', default=False)
     boolean_flag(parser, 'prioritized_replay', default=False)
     parser.add_argument('--alpha', help='how much prioritized', type=float, default=0.3)
