@@ -6,7 +6,7 @@ from gym import spaces
 from imitation.common import tf_util as U
 from imitation.common import abstract_module as my
 from imitation.common.sonnet_util import RewardNN
-from imitation.common.mpi_running_mean_std import RunningMeanStd
+from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
 
 
 class Discriminator(my.AbstractModule):
@@ -57,14 +57,14 @@ class Discriminator(my.AbstractModule):
             if self.hps.rmsify_obs:
                 # Smooth out observations using running statistics and clip
                 with tf.variable_scope("apply_obs_rms"):
-                    self.obs_rms = RunningMeanStd(shape=self.ob_shape)
+                    self.obs_rms = MpiRunningMeanStd(shape=self.ob_shape)
                 p_obz = self.clip_obs(self.rmsify(p_obs, self.obs_rms))
                 e_obz = self.clip_obs(self.rmsify(e_obs, self.obs_rms))
             else:
                 p_obz = p_obs
                 e_obz = e_obs
 
-        # Build graphs
+        # Build graph
         self.p_scores = self.reward_nn(p_obz, p_acs)
         self.e_scores = self.reward_nn(e_obz, e_acs)
         self.scores = tf.concat([self.p_scores, self.e_scores], axis=0)

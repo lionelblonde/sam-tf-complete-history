@@ -8,7 +8,7 @@ from imitation.common import abstract_module as my
 from imitation.common.sonnet_util import ActorNN, CriticNN
 from imitation.common import logger
 from imitation.common.mpi_moments import mpi_mean_like
-from imitation.common.mpi_running_mean_std import RunningMeanStd
+from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
 from imitation.common.misc_util import onehotify, flatten_lists, fl32, zipsame
 from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.imitation_algorithms import memory as XP
@@ -144,7 +144,7 @@ class SAMAgent(my.AbstractModule):
             # Smooth out observations using running statistics and clip
             if self.hps.rmsify_obs:
                 with tf.variable_scope("apply_obs_rms"):
-                    self.obs_rms = RunningMeanStd(shape=self.ob_shape)
+                    self.obs_rms = MpiRunningMeanStd(shape=self.ob_shape)
                 # Smooth out observations using running statistics and clip
                 self.obz0 = self.clip_obs(self.rmsify(self.obs0, self.obs_rms))
                 self.obz1 = self.clip_obs(self.rmsify(self.obs1, self.obs_rms))
@@ -155,15 +155,15 @@ class SAMAgent(my.AbstractModule):
         # Rescale returns
         if self.hps.rmsify_rets:
             with tf.variable_scope("apply_ret_rms"):
-                self.ret_rms = RunningMeanStd()  # scalar, no shape to provide
+                self.ret_rms = MpiRunningMeanStd()  # scalar, no shape to provide
             # Normalize and clip the 1-step (and optionaly n-step) critic target(s) value(s)
             self.tc1z = self.clip_rets(self.rmsify(self.tc1s, self.ret_rms))
             if self.hps.n_step_returns:
                 self.tcnz = self.clip_rets(self.rmsify(self.tcns, self.ret_rms))
         else:
-            self.tc1z = self.tc1s
+            self.tc1z = self.clip_rets(self.tc1s)
             if self.hps.n_step_returns:
-                self.tcnz = self.tcns
+                self.tcnz = self.clip_rets(self.tcns)
 
         # Build graphs
 
@@ -606,9 +606,9 @@ class SAMAgent(my.AbstractModule):
             old_ret_mean, old_ret_std = self.old_ret_stats(b_rews)
             # The values are stored as `old_*`, an update is now performed
             # on the return stats, using the freshly computed target Q value
-            self.ret_rms.update(targ_q_1.flatten())
+            self.ret_rms.update(targ_q_1.flatten(), self.comm)
             if self.hps.n_step_returns:
-                self.ret_rms.update(targ_q_n.flatten())
+                self.ret_rms.update(targ_q_n.flatten(), self.comm)
             # Perform popart critic output parameters rectifications
             self.popart(np.array([old_ret_mean]), np.array([old_ret_std]))
 

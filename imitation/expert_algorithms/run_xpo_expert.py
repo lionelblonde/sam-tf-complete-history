@@ -29,7 +29,7 @@ def train_xpo_expert(args):
     set_global_seeds(worker_seed)
     # Create environment
     name = "{}.worker_{}".format(args.task, rank)
-    env = make_env(args)(args.env_id, worker_seed, name, args.horizon)
+    env = make_env(args.env_id, worker_seed, name, args.horizon)
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)
@@ -96,7 +96,7 @@ def evaluate_xpo_expert(args):
     # Seedify
     set_global_seeds(args.seed)
     # Create environment
-    env = make_env(args)(args.env_id, args.seed, args.task, args.horizon)
+    env = make_env(args.env_id, args.seed, args.task, args.horizon)
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)
@@ -126,7 +126,7 @@ def gather_xpo_expert(args):
     # Seedify
     set_global_seeds(args.seed)
     # Create environment
-    env = make_env(args)(args.env_id, args.seed, args.task, args.horizon)
+    env = make_env(args.env_id, args.seed, args.task, args.horizon)
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)

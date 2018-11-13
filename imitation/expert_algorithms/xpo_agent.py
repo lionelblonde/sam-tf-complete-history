@@ -6,7 +6,7 @@ from gym import spaces
 import imitation.common.tf_util as U
 from imitation.common import abstract_module as my
 from imitation.common.sonnet_util import PolicyNN, ValueNN
-from imitation.common.mpi_running_mean_std import RunningMeanStd
+from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
 
 
 class XPOAgent(my.AbstractModule):
@@ -26,11 +26,10 @@ class XPOAgent(my.AbstractModule):
         self.hps = hps
 
         # Assemble clipping functions
-        unlimited_range = (-np.infty, np.infty)
         if isinstance(self.ac_space, spaces.Box):
-            self.clip_obs = U.clip((-5, 5))
+            self.clip_obs = U.clip((-5., 5.))
         elif isinstance(self.ac_space, spaces.Discrete):
-            self.clip_obs = U.clip(unlimited_range)
+            self.clip_obs = U.clip((-np.infty, np.infty))
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
 
@@ -52,12 +51,12 @@ class XPOAgent(my.AbstractModule):
             if self.hps.rmsify_obs:
                 # Smooth out observations using running statistics and clip
                 with tf.variable_scope("apply_obs_rms"):
-                    self.obs_rms = RunningMeanStd(shape=self.ob_shape)
+                    self.obs_rms = MpiRunningMeanStd(shape=self.ob_shape)
                 obz = self.clip_obs(self.rmsify(ob, self.obs_rms))
             else:
                 obz = ob
 
-        # Build graphs
+        # Build graph
         self.pd_pred = self.policy_nn(obz)
         self.ac_pred = U.switch(sample_or_mode, self.pd_pred.sample(), self.pd_pred.mode())
         self.v_pred = self.value_nn(obz)

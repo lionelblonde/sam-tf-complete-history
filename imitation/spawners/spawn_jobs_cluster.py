@@ -1,6 +1,5 @@
 """Example launch
     python -m imitation.spawners.spawn_jobs_cluster \
-        --script_dir=tmpscripts \
         --task=sam \
         --benchmark=mujoco \
         --cluster=cscs \
@@ -10,7 +9,7 @@
         --num_workers=4 \
         --partition=shared-gpu \
         --time=12:00:00 \
-        --max_seed=5 \
+        --num_seeds=5 \
         --docker \
         --no-call \
         --no-rand
@@ -45,14 +44,14 @@ parser.add_argument('--num_workers', type=int, default=1,
                     help="number of parallel mpi workers (actors) to use for each job")
 parser.add_argument('--partition', type=str, default=None, help="partition to launch jobs on")
 parser.add_argument('--time', type=str, default=None, help="duration of the jobs")
-parser.add_argument('--max_seed', type=int, default=5,
-                    help="amount of seeds across which jobs are replicated ('range(max_seed)'')")
+parser.add_argument('--num_seeds', type=int, default=5,
+                    help="amount of seeds across which jobs are replicated ('range(num_seeds)'')")
 boolean_flag(parser, 'docker', default=True, help="whether to run through docker containers")
 boolean_flag(parser, 'call', default=False, help="whether to launch the jobs once created")
 boolean_flag(parser, 'rand', default=False, help="whether to perform hyperparameter search")
 args = parser.parse_args()
 
-NUM_DEMOS_SET = [4, 16, 32]
+NUM_DEMOS_SET = [2, 8, 16]
 MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
                    'InvertedDoublePendulum-v2',
                    'Reacher-v2',
@@ -154,7 +153,7 @@ def get_rand_hps(args, meta):
                      'algo': 'ppo',
                      'rmsify_obs': 0,
                      'save_frequency': 10,
-                     'num_timesteps': int(1e7),
+                     'num_timesteps': int(1e9),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -225,7 +224,7 @@ def get_rand_hps(args, meta):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': np.random.choice([10, 20, 40]),
+                     'training_steps_per_iter': np.random.choice([10, 25]),
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
@@ -289,7 +288,7 @@ def get_rand_hps(args, meta):
                      'algo': 'ppo',
                      'rmsify_obs': 1,
                      'save_frequency': 10,
-                     'num_timesteps': int(1e7),
+                     'num_timesteps': int(1e9),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -351,7 +350,7 @@ def get_rand_hps(args, meta):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': np.random.choice([10, 20, 40]),
+                     'training_steps_per_iter': np.random.choice([10, 25]),
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
@@ -366,7 +365,7 @@ def get_rand_hps(args, meta):
                      'hid_w_init': 'he_normal',
                      'tau': 0.01,
                      'with_layernorm': 1,
-                     'ac_branch_in': 2,
+                     'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
                      'label_smoothing': 1,
                      'one_sided_label_smoothing': 1,
@@ -402,7 +401,7 @@ def get_rand_hps(args, meta):
         raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
 
 
-def get_spectrum_hps(args, meta, max_seed):
+def get_spectrum_hps(args, meta, num_seeds):
     """Return a list of maps of hyperparameters selected deterministically
     and spanning the specified range of seeds
     Example of hyperparameter dictionary:
@@ -426,7 +425,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'algo': 'ppo',
                      'rmsify_obs': 0,
                      'save_frequency': 10,
-                     'num_timesteps': int(1e7),
+                     'num_timesteps': int(1e9),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -494,7 +493,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 40,
+                     'training_steps_per_iter': 25,
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
@@ -558,7 +557,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'algo': 'ppo',
                      'rmsify_obs': 1,
                      'save_frequency': 10,
-                     'num_timesteps': int(1e7),
+                     'num_timesteps': int(1e9),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -617,11 +616,11 @@ def get_spectrum_hps(args, meta, max_seed):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 40,
+                     'training_steps_per_iter': 25,
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
-                     'batch_size': 64,
+                     'batch_size': 256,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -631,7 +630,7 @@ def get_spectrum_hps(args, meta, max_seed):
                      'hid_w_init': 'he_normal',
                      'tau': 0.01,
                      'with_layernorm': 1,
-                     'ac_branch_in': 2,
+                     'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
                      'label_smoothing': 1,
                      'one_sided_label_smoothing': 1,
@@ -668,7 +667,7 @@ def get_spectrum_hps(args, meta, max_seed):
     if args.task in ['gail', 'sam']:
         # Duplicate every hyperparameter map of the list to span the range of seeds
         output = [dup_hps_for_seed(hpmap, seed)
-                  for seed in range(max_seed)
+                  for seed in range(num_seeds)
                   for hpmap in hpmaps]
         # Duplicate every hyperparameter map of the list to span the range of num of demos
         output = [dup_hps_for_num_demos(hpmap, num_demos)
@@ -876,7 +875,7 @@ def run(args):
         hpmaps = flatten_lists(hpmaps)
     else:
         # Get the deterministic spectrum of specified hyperparameters
-        hpmaps = get_spectrum_hps(args, meta, args.max_seed)
+        hpmaps = get_spectrum_hps(args, meta, args.num_seeds)
     # Create associated task strings
     exp_strs = [format_exp_str(args, hpmap) for hpmap in hpmaps]
     if not len(exp_strs) == len(set(exp_strs)):

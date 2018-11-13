@@ -31,7 +31,7 @@ def imitate_via_gail(args):
     set_global_seeds(worker_seed)
     # Create environment
     name = "{}.worker_{}".format(args.task, rank)
-    env = make_env(args)(args.env_id, worker_seed, name, args.horizon)
+    env = make_env(args.env_id, worker_seed, name, args.horizon)
 
     # Refine hps to avoid ambiguities
     pol_hps, d_hps = disambiguate(kvs=args, tokens=['pol', 'd'])
@@ -92,7 +92,7 @@ def evaluate_gail_policy(args):
     # Seedify
     set_global_seeds(args.seed)
     # Create environment
-    env = make_env(args)(args.env_id, args.seed, args.task, args.horizon)
+    env = make_env(args.env_id, args.seed, args.task, args.horizon)
 
     # Refine hps to avoid ambiguities
     pol_hps, d_hps = disambiguate(kvs=args, tokens=['pol', 'd'])

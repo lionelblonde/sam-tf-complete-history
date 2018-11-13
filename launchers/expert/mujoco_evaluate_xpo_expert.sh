@@ -13,7 +13,7 @@ python -m imitation.expert_algorithms.run_xpo_expert \
     --rmsify_obs \
     --hid_widths 64 64 \
     --hid_nonlin="leaky_relu" \
-    --num_trajs=2 \
+    --num_trajs=20 \
     --no-sample_or_mode \
     --render \
     --model_ckpt_dir=$2

@@ -37,7 +37,6 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, exper
     mu.reset_noise()
     ob = env.reset()
     if expert_dataset is not None:
-        logger.info("o/")
         # Override with an observation from expert demos
         ob = reset_with_demos_()
     cur_ep_len = 0
@@ -174,7 +173,6 @@ def evaluate(env,
     traj_gen = traj_ep_generator(env, mu, d, render)
     # Initialize and load the previously learned weights into the freshly re-built graph
     U.initialize()
-    mu.initialize()
     if exact_model_path is not None:
         U.load_model(exact_model_path)
         logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
@@ -235,7 +233,7 @@ def learn(comm,
 
     # Create discriminator
     d = discriminator_wrapper('d')
-    # Create a sam agent, taking `d` as input
+    # Create sam agent, taking `d` as input
     mu = sam_agent_wrapper('mu', d)
 
     # Create mpi adam optimizer for the discriminator
@@ -265,8 +263,7 @@ def learn(comm,
         mu.replay_buffer.add_demo_transitions_to_mem(expert_dataset)
 
     # Create context manager that records the time taken by encapsulated ops
-    timed = timed_cm_wrapper(comm=comm, logger=logger,
-                             color_message='magenta', color_elapsed_time='cyan')
+    timed = timed_cm_wrapper(comm, logger, color_message='magenta', color_elapsed_time='cyan')
 
     if rank == 0:
         # Create summary writer

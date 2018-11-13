@@ -1,10 +1,12 @@
 from mpi4py import MPI
-import tensorflow as tf
-import imitation.common.tf_util as U
+
 import numpy as np
+import tensorflow as tf
+
+import imitation.common.tf_util as U
 
 
-class RunningMeanStd(object):
+class MpiRunningMeanStd(object):
     # https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
     def __init__(self, epsilon=1e-2, shape=()):
 
@@ -38,15 +40,13 @@ class RunningMeanStd(object):
                    tf.assign_add(self._count, newcount)]
         self.incfiltparams = U.function([newsum, newsumsq, newcount], [], updates=updates)
 
-    def update(self, x, comm=None):
+    def update(self, x, comm):
         x = x.astype('float64')
         n = int(np.prod(self.shape))
         totalvec = np.zeros(n * 2 + 1, 'float64')
         addvec = np.concatenate([x.sum(axis=0).ravel(),
                                  np.square(x).sum(axis=0).ravel(),
                                  np.array([len(x)], dtype='float64')])
-        if comm is None:
-            comm = MPI.COMM_WORLD
         comm.Allreduce(addvec, totalvec, op=MPI.SUM)
         self.incfiltparams(totalvec[0:n].reshape(self.shape),
                            totalvec[n:2 * n].reshape(self.shape),

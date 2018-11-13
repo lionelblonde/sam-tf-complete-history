@@ -83,13 +83,9 @@ class ExperimentInitializer:
         """Assemble long experiment name"""
         name = self.get_short_name()
         if self.args.task in ['imitate_via_gail', 'imitate_via_sam']:
-            if self.args.task in ['imitate_via_gail', 'imitate_via_sam']:
-                name += "{}.".format(self.args.task)
-            else:
-                name += "{}.max_iters_{}.".format(self.args.task, self.args.max_iters)
-            # common to 'imitate' and 'clone'
-            if self.args.num_demos != np.inf:
-                name += "num_demos_{}.".format(self.args.num_demos)
+            name += "{}.".format(self.args.task)
+            assert self.args.num_demos != np.inf, "num demos must be finite"
+            name += "num_demos_{}.".format(self.args.num_demos)
         elif self.args.task in ['train_xpo_expert']:
             name += "{}.{}.".format(self.args.task, self.args.algo)
         else:

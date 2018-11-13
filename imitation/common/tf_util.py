@@ -461,7 +461,3 @@ def get_placeholder(name, dtype, shape):
 def get_placeholder_cached(name):
     """Returns an error if the placeholder does not exist"""
     return _PLACEHOLDER_CACHE[name][0]
-
-
-def flatten_all_but_0(x):
-    return tf.reshape(x, [-1, intprod(x.get_shape().as_list()[1:])])

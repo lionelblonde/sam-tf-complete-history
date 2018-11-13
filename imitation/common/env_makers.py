@@ -59,13 +59,14 @@ def make_atari_env(env_id, seed, name, horizon=None, allow_early_resets=False):
     return env
 
 
-def make_env(args):
-    """Apply the proper wrapper based on args content"""
-    env_id_stem = args.env_id.split('-')[0]
+def make_env(env_id, seed, name, horizon=None, allow_early_resets=None):
+    """Create an environment"""
+    env_id_stem = env_id.split('-')[0]
     if env_id_stem in MUJOCO_ENV_NAMES:
         _make_env = make_mujoco_env
     elif env_id_stem in ATARI_ENV_NAMES:
         _make_env = make_atari_env
     else:
         raise RuntimeError("unknown benchmark, check what's available in 'env_makers.py'")
-    return _make_env
+    env = _make_env(env_id, seed, name, horizon, allow_early_resets)
+    return env

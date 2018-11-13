@@ -52,10 +52,10 @@ class DemoDataset(object):
         Note that 'ep_rets' is stored solely for monitoring purposes, and w/o 'ep_rets',
         a transition corrsponds exactly to the format of transitions stored in memory.
         """
-        self.size = size
         # Load the .npz archive file
         logger.info("loading expert demonstration trajectories from archive")
         traj_data = np.load(expert_arxiv)
+        self.size = size
         assert 0 <= self.size <= len(traj_data['obs0']), "wrong demo dataset size"  # arbitrarily
 
         # Unpack
@@ -84,7 +84,7 @@ class DemoDataset(object):
 
         if train_fraction is not None:
             # Split dataset into train and test datasets (used in BC)
-            t_t_frontier = int(self.extracted_num_transitions * train_fraction)
+            t_t_frontier = int(self.size * train_fraction)
             self.pair_train_set = PairDataset(self.obs0[:t_t_frontier, :],
                                               self.acs[:t_t_frontier, :],
                                               self.randomize)
