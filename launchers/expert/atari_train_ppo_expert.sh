@@ -15,7 +15,7 @@ mpirun -np $1 --bind-to core python -m imitation.expert_algorithms.run_xpo_exper
     --algo="ppo" \
     --no-rmsify_obs \
     --save_frequency=10 \
-    --num_timesteps=10000000 \
+    --num_timesteps=1000000000 \
     --timesteps_per_batch=2048 \
     --batch_size=64 \
     --optim_epochs_per_iter=10 \

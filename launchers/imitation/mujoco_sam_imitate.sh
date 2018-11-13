@@ -31,7 +31,7 @@ mpirun -np $1 --bind-to core python -m imitation.imitation_algorithms.run_sam \
     --hid_w_init="he_normal" \
     --tau=0.01 \
     --with_layernorm \
-    --ac_branch_in=2 \
+    --ac_branch_in=1 \
     --d_ent_reg_scale=0. \
     --label_smoothing \
     --one_sided_label_smoothing \

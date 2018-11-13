@@ -15,7 +15,7 @@ mpirun -np $1 --bind-to core python -m imitation.expert_algorithms.run_xpo_exper
     --algo='trpo' \
     --rmsify_obs \
     --save_frequency=10 \
-    --num_timesteps=10000000 \
+    --num_timesteps=1000000000 \
     --timesteps_per_batch=1024 \
     --batch_size=64 \
     --sample_or_mode \
