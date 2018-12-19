@@ -28,7 +28,7 @@ from imitation.common.misc_util import flatten_lists, zipsame, boolean_flag
 from imitation.common.experiment_initializer import rand_id
 
 
-parser = argparse.ArgumentParser(description='SAM Job Orchestrator + HP Search')
+parser = argparse.ArgumentParser(description="SAM Job Orchestrator + HP Search")
 parser.add_argument('--task', type=str, choices=['ppo', 'gail', 'sam'], default='ppo',
                     help="whether to train an expert with PPO or an imitator with GAIL or SAM")
 parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco',
@@ -51,7 +51,7 @@ boolean_flag(parser, 'call', default=False, help="whether to launch the jobs onc
 boolean_flag(parser, 'rand', default=False, help="whether to perform hyperparameter search")
 args = parser.parse_args()
 
-NUM_DEMOS_SET = [2, 8, 16]
+NUM_DEMOS_SET = [4, 16]
 MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
                    'InvertedDoublePendulum-v2',
                    'Reacher-v2',
@@ -620,7 +620,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
-                     'batch_size': 256,
+                     'batch_size': 64,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -692,6 +692,7 @@ def unroll_options(hpmap):
                      'one_sided_label_smoothing',
                      'prioritized_replay',
                      'ranked',
+                     'reset_with_demos',
                      'add_demos_to_mem',
                      'unreal',
                      'n_step_returns']

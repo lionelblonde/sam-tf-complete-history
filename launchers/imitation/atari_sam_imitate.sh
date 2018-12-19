@@ -3,7 +3,20 @@
 
 cd ../..
 
-mpirun -np $1 --bind-to core python -m imitation.imitation_algorithms.run_sam \
+opts="-np $1"
+unamestr="$(uname)"
+if [[ ! "$unamestr" == "Darwin" ]]; then
+    opts="$opts --bind-to core"
+    nlogicores="$(nproc)"
+    echo "non-Darwin platform: binding processes to cores"
+else
+    nlogicores="$(sysctl -n hw.ncpu)"
+    echo "Darwin platform: not binding processes to cores"
+fi
+echo "$1 process(es), $nlogicores total logical cores"
+echo "mpi options: $opts"
+
+mpirun $opts python -m imitation.imitation_algorithms.run_sam \
     --note="" \
     --env_id=$2 \
     --from_raw_pixels \
