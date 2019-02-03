@@ -97,7 +97,7 @@ RUN pip install \
 RUN pip install --ignore-installed --upgrade https://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-1.12.0-cp36-cp36m-linux_x86_64.whl
 RUN pip install \
     tensorflow-probability-gpu \
-    dm-sonnet-gpu \
+    dm-sonnet-gpu==1.23 \
     && rm -rf ~/.cache/pip
 
 # Install MuJoCo 1.50

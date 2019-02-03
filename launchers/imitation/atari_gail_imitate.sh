@@ -3,20 +3,7 @@
 
 cd ../..
 
-opts="-np $1"
-unamestr="$(uname)"
-if [[ ! "$unamestr" == "Darwin" ]]; then
-    opts="$opts --bind-to core"
-    nlogicores="$(nproc)"
-    echo "non-Darwin platform: binding processes to cores"
-else
-    nlogicores="$(sysctl -n hw.ncpu)"
-    echo "Darwin platform: not binding processes to cores"
-fi
-echo "$1 process(es), $nlogicores total logical cores"
-echo "mpi options: $opts"
-
-mpirun $opts python -m imitation.imitation_algorithms.run_gail \
+mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_gail \
     --note="" \
     --env_id=$2 \
     --from_raw_pixels \
@@ -28,7 +15,7 @@ mpirun $opts python -m imitation.imitation_algorithms.run_gail \
     --expert_path=$3 \
     --no-rmsify_obs \
     --save_frequency=100 \
-    --num_timesteps=1000000000 \
+    --num_timesteps=1e9 \
     --timesteps_per_batch=1024 \
     --batch_size=128 \
     --sample_or_mode \

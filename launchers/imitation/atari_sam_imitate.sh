@@ -3,20 +3,7 @@
 
 cd ../..
 
-opts="-np $1"
-unamestr="$(uname)"
-if [[ ! "$unamestr" == "Darwin" ]]; then
-    opts="$opts --bind-to core"
-    nlogicores="$(nproc)"
-    echo "non-Darwin platform: binding processes to cores"
-else
-    nlogicores="$(sysctl -n hw.ncpu)"
-    echo "Darwin platform: not binding processes to cores"
-fi
-echo "$1 process(es), $nlogicores total logical cores"
-echo "mpi options: $opts"
-
-mpirun $opts python -m imitation.imitation_algorithms.run_sam \
+mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_sam \
     --note="" \
     --env_id=$2 \
     --from_raw_pixels \
@@ -28,12 +15,12 @@ mpirun $opts python -m imitation.imitation_algorithms.run_sam \
     --expert_path=$3 \
     --no-rmsify_obs \
     --save_frequency=100 \
-    --num_timesteps=10000000 \
-    --training_steps_per_iter=25 \
+    --num_timesteps=1e7 \
+    --training_steps_per_iter=50 \
     --eval_steps_per_iter=10 \
     --no-render \
     --timesteps_per_batch=4 \
-    --batch_size=64 \
+    --batch_size=32 \
     --num_demos=$4 \
     --g_steps=3 \
     --d_steps=1 \
@@ -46,7 +33,7 @@ mpirun $opts python -m imitation.imitation_algorithms.run_sam \
     --d_filter_shapes 8 4 \
     --d_stride_shapes 4 2 \
     --d_hid_widths 128 \
-    --hid_nonlin="leaky_relu" \
+    --hid_nonlin="relu" \
     --hid_w_init="he_normal" \
     --tau=0.01 \
     --with_layernorm \
@@ -65,7 +52,7 @@ mpirun $opts python -m imitation.imitation_algorithms.run_sam \
     --rew_aug_coeff=0. \
     --param_noise_adaption_frequency=40 \
     --gamma=0.99 \
-    --mem_size=100000 \
+    --mem_size=1e4 \
     --no-prioritized_replay \
     --alpha=0.3 \
     --beta=1. \
@@ -76,6 +63,6 @@ mpirun $opts python -m imitation.imitation_algorithms.run_sam \
     --q_loss_scale=1. \
     --td_loss_1_scale=1. \
     --td_loss_n_scale=1. \
-    --wd_scale=0.001 \
+    --wd_scale=1e-3 \
     --n_step_returns \
     --n=96
