@@ -1,6 +1,5 @@
 import random
 
-import gym
 import numpy as np
 
 
@@ -16,13 +15,6 @@ def onehotify(targets, num_dims):
     one_hot_targets = np.eye(num_dims)[targets]
     assert (np.sum(one_hot_targets, axis=-1).reshape(-1) == 1.).all(), "encoding failed"
     return one_hot_targets
-
-
-def fl32(x):
-    """Cast any castable entity to type 'float32'
-    `astype` is a numpy function
-    """
-    return x.astype('float32')
 
 
 def flatten_lists(listoflists):
@@ -119,21 +111,3 @@ def boolean_flag(parser, name, default=False, help=None):
     dest = name.replace('-', '_')
     parser.add_argument("--" + name, action="store_true", default=default, dest=dest, help=help)
     parser.add_argument("--no-" + name, action="store_false", dest=dest)
-
-
-def get_wrapper_by_name(env, classname):
-    """Given an a gym environment possibly wrapped multiple times, return a gym.Wrapper
-    of class named 'classname' or raises ValueError if no such wrapper was applied.
-
-    Args:
-        env (gym.Env of gym.Wrapper): Gym environment
-        classname (str): Name of the wrapper
-    """
-    currentenv = env
-    while True:
-        if classname == currentenv.class_name():
-            return currentenv
-        elif isinstance(currentenv, gym.Wrapper):
-            currentenv = currentenv.env
-        else:
-            raise ValueError("Couldn't find wrapper named %s" % classname)

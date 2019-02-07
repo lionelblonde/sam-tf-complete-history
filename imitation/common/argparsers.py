@@ -81,6 +81,10 @@ def xpo_expert_argparser(description="XPO Expert Experiment"):
                         default='data/logs')
     parser.add_argument('--summary_dir', help='directory to save the summaries',
                         default='data/summaries')
+    boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
+    boolean_flag(parser, 'record', help='whether to record the interaction traces', default=False)
+    parser.add_argument('--video_dir', help='directory to save the video recordings',
+                        default='data/videos')
     parser.add_argument('--task', help='task to carry out', type=str,
                         choices=['train_xpo_expert',
                                  'evaluate_xpo_expert',
@@ -100,7 +104,6 @@ def xpo_expert_argparser(description="XPO Expert Experiment"):
     parser.add_argument('--lr', help='adam learning rate', type=float, default=3e-4)
     boolean_flag(parser, 'sample_or_mode', default=True,
                  help='whether to pick actions by sampling or taking the mode')
-    boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
     parser.add_argument('--num_trajs', help='number of trajectories to evaluate/gather',
                         type=int, default=10)
     parser.add_argument('--exact_model_path', help='exact path of the model',
@@ -154,6 +157,10 @@ def gail_argparser(description="GAIL Experiment"):
                         default='data/logs')
     parser.add_argument('--summary_dir', help='directory to save the summaries',
                         default='data/summaries')
+    boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
+    boolean_flag(parser, 'record', help='whether to record the interaction traces', default=False)
+    parser.add_argument('--video_dir', help='directory to save the video recordings',
+                        default='data/videos')
     parser.add_argument('--task', help='task to carry out', type=str,
                         choices=['imitate_via_gail',
                                  'evaluate_gail_policy'],
@@ -167,7 +174,6 @@ def gail_argparser(description="GAIL Experiment"):
     parser.add_argument('--batch_size', help='minibatch size', type=int, default=32)
     boolean_flag(parser, 'sample_or_mode', default=True,
                  help='whether to pick actions by sampling or taking the mode')
-    boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
     parser.add_argument('--num_trajs', help='number of trajectories to evaluate/gather',
                         type=int, default=10)
     parser.add_argument('--exact_model_path', help='exact path of the model',
@@ -231,6 +237,10 @@ def sam_argparser(description="SAM Experiment"):
                         default='data/logs')
     parser.add_argument('--summary_dir', help='directory to save the summaries',
                         default='data/summaries')
+    boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
+    boolean_flag(parser, 'record', help='whether to record the interaction traces', default=False)
+    parser.add_argument('--video_dir', help='directory to save the video recordings',
+                        default='data/videos')
     parser.add_argument('--task', help='task to carry out', type=str,
                         choices=['imitate_via_sam',
                                  'evaluate_sam_policy'],
@@ -244,7 +254,6 @@ def sam_argparser(description="SAM Experiment"):
     parser.add_argument('--batch_size', help='minibatch size', type=int, default=32)
     parser.add_argument('--window', help='window size for optional d training on recent data',
                         type=int, default=None)
-    boolean_flag(parser, 'render', help='whether to render the interaction traces', default=False)
     parser.add_argument('--num_trajs', help='number of trajectories to evaluate/gather',
                         type=int, default=10)
     parser.add_argument('--exact_model_path', help='exact path of the model',

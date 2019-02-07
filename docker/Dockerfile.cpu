@@ -17,6 +17,8 @@ RUN apt-get update -q \
     python3-dev \
     python-setuptools \
     libopenmpi-dev \
+    openssh-client \
+    openssh-server \
     python-pip \
     zlib1g-dev \
     python-opencv \
@@ -97,7 +99,6 @@ RUN pip install \
 RUN pip install --ignore-installed --upgrade https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow-1.12.0-cp36-cp36m-linux_x86_64.whl
 RUN pip install \
     tensorflow-probability \
-    dm-sonnet \
     && rm -rf ~/.cache/pip
 
 # Install MuJoCo 1.50

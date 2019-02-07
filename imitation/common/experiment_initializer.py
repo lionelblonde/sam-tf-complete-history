@@ -88,6 +88,10 @@ class ExperimentInitializer:
             name += "num_demos_{}.".format(self.args.num_demos)
         elif self.args.task in ['train_xpo_expert']:
             name += "{}.{}.".format(self.args.task, self.args.algo)
+        elif 'evaluate' in self.args.task:
+            name += "{}.".format(self.args.task)
+            assert self.args.num_trajs != np.inf, "num trajs must be finite"
+            name += "num_trajs_{}.".format(self.args.num_trajs)
         else:
             raise NotImplementedError
         name += self.args.env_id.split('-')[0]  # get rid of the env version

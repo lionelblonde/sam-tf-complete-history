@@ -5,7 +5,7 @@ from gym import spaces
 
 import imitation.common.tf_util as U
 from imitation.common import abstract_module as my
-from imitation.common.sonnet_util import PolicyNN, ValueNN
+from imitation.common.networks import PolicyNN, ValueNN
 from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
 
 
@@ -33,7 +33,7 @@ class XPOAgent(my.AbstractModule):
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
 
-        # Define policy network
+        # Define the policy and value networks
         self.policy_nn = PolicyNN(scope=self.scope, name='pol', ac_space=self.ac_space, hps=hps)
         self.value_nn = ValueNN(scope=self.scope, name='vf', hps=hps)
 

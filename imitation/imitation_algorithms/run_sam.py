@@ -1,3 +1,4 @@
+from os import makedirs
 import os.path as osp
 
 import gym.spaces  # noqa
@@ -24,6 +25,8 @@ def imitate_via_sam(args):
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args, comm=comm)
     experiment.configure_logging()
+    # Create experiment name
+    experiment_name = experiment.get_long_name()
 
     # Seedify
     rank = comm.Get_rank()
@@ -42,9 +45,6 @@ def imitate_via_sam(args):
     # Create a sam agent wrapper (note the second input)
     def sam_agent_wrapper(name, d):
         return SAMAgent(name=name, comm=comm, env=env, hps=actorcritic_hps, d=d)
-
-    # Create experiment name
-    experiment_name = experiment.get_long_name()
 
     # Create the expert demonstrations dataset from expert trajectories
     dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos,
@@ -81,7 +81,7 @@ def imitate_via_sam(args):
               training_steps_per_iter=args.training_steps_per_iter,
               eval_steps_per_iter=args.eval_steps_per_iter,
               render=args.render,
-              max_timesteps=args.num_timesteps)
+              max_timesteps=int(args.num_timesteps))
 
     # Close environment
     env.close()
@@ -106,6 +106,20 @@ def evaluate_sam_policy(args):
     # Create environment
     env = make_env(args.env_id, args.seed, args.task, args.horizon)
 
+    if args.record:
+        # Create experiment name
+        experiment_name = experiment.get_long_name()
+        save_dir = osp.join(args.video_dir, experiment_name)
+        makedirs(save_dir, exist_ok=True)
+        # Wrap the environment again to record videos
+        from imitation.common.video_recorder_wrapper import VideoRecorder
+        video_length = args.horizon if args.horizon is not None else env.env._max_episode_steps
+        env = VideoRecorder(env=env,
+                            save_dir=save_dir,
+                            record_video_trigger=lambda x: x % x == 0,  # record at the very start
+                            video_length=video_length,
+                            prefix="video_{}".format(args.env_id))
+
     # Refine hps to avoid ambiguities
     actorcritic_hps, d_hps = disambiguate(kvs=args, tokens=['actorcritic', 'd'])
 
@@ -114,7 +128,7 @@ def evaluate_sam_policy(args):
 
     # Create a sam agent wrapper (note the second input)
     def sam_agent_wrapper(name, d):
-        return SAMAgent(name=name, env=env, hps=actorcritic_hps, d=d)
+        return SAMAgent(name=name, env=env, hps=actorcritic_hps, d=d, comm=None)
 
     # Evaluate TRPO agent trained via SAM
     sam.evaluate(env=env,

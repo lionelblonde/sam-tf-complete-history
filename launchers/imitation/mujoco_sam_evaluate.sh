@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Example: ./mujoco_sam_evaluate.sh <env_id> <sam_pol_ckpt_dir_path>
+# Example: ./mujoco_sam_evaluate.sh <env_id> <sam_pol_ckpt_dir_path> <num_trajs>
 
 cd ../..
 
@@ -24,7 +24,9 @@ python -m imitation.imitation_algorithms.run_sam \
     --task="evaluate_sam_policy" \
     --actorcritic_hid_widths 64 64 \
     --d_hid_widths 64 64 \
-    --hid_nonlin="relu" \
-    --num_trajs=10 \
+    --hid_nonlin="leaky_relu" \
+    --num_trajs=$3 \
     --no-render \
+    --record \
+    --video_dir="data/videos" \
     --model_ckpt_dir=$2

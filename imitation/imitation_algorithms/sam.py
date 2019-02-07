@@ -412,8 +412,6 @@ def learn(comm,
                     # Store the losses and gradients in their respective deques
                     d_grads_buffer.append(grads)
                     d_losses_buffer.append(new_losses)
-                    # Assess consistency of accuracies
-                    assert d.assert_acc_consistency(ob_pol, ac_pol, ob_exp, ac_exp)
 
                 # --[Train d on pairs sampled from the replay buffer]--
                 # Collect pairs uniformly from the experience replay buffer
@@ -445,8 +443,6 @@ def learn(comm,
                 # Store the losses and gradients in their respective deques
                 d_grads_buffer.append(grads)
                 d_losses_buffer.append(new_losses)
-                # Assess consistency of accuracies
-                assert d.assert_acc_consistency(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
 
             if mu.param_noise is not None:
                 if training_step % param_noise_adaption_frequency == 0:

@@ -7,6 +7,7 @@ cv2.ocl.setUseOpenCL(False)
 
 
 class NoopResetEnv(gym.Wrapper):
+
     def __init__(self, env, noop_max=30):
         """Sample initial states by taking random number of no-ops on reset.
         No-op is assumed to be action 0.
@@ -37,6 +38,7 @@ class NoopResetEnv(gym.Wrapper):
 
 
 class FireResetEnv(gym.Wrapper):
+
     def __init__(self, env):
         """Take action on reset for environments that are fixed until firing."""
         gym.Wrapper.__init__(self, env)
@@ -58,6 +60,7 @@ class FireResetEnv(gym.Wrapper):
 
 
 class EpisodicLifeEnv(gym.Wrapper):
+
     def __init__(self, env):
         """Make end-of-life == end-of-episode, but only reset on true game over.
         Done by DeepMind for the DQN and co. since it helps value estimation.
@@ -95,6 +98,7 @@ class EpisodicLifeEnv(gym.Wrapper):
 
 
 class MaxAndSkipEnv(gym.Wrapper):
+
     def __init__(self, env, skip=4):
         """Return only every `skip`-th frame"""
         gym.Wrapper.__init__(self, env)
@@ -126,6 +130,7 @@ class MaxAndSkipEnv(gym.Wrapper):
 
 
 class ClipRewardEnv(gym.RewardWrapper):
+
     def __init__(self, env):
         gym.RewardWrapper.__init__(self, env)
 
@@ -135,6 +140,7 @@ class ClipRewardEnv(gym.RewardWrapper):
 
 
 class WarpFrame(gym.ObservationWrapper):
+
     def __init__(self, env):
         """Warp frames to 84x84 as done in the Nature paper and later work."""
         gym.ObservationWrapper.__init__(self, env)
@@ -151,6 +157,7 @@ class WarpFrame(gym.ObservationWrapper):
 
 
 class FrameStack(gym.Wrapper):
+
     def __init__(self, env, k):
         """Stack k last frames.
 
@@ -185,6 +192,7 @@ class FrameStack(gym.Wrapper):
 
 
 class ScaledFloatFrame(gym.ObservationWrapper):
+
     def __init__(self, env):
         gym.ObservationWrapper.__init__(self, env)
 
@@ -195,6 +203,7 @@ class ScaledFloatFrame(gym.ObservationWrapper):
 
 
 class LazyFrames(object):
+
     def __init__(self, frames):
         """This object ensures that common frames between the observations are only stored once.
         It exists purely to optimize memory usage which can be huge for DQN's 1M frames replay
@@ -235,8 +244,7 @@ def make_atari(env_id):
 
 
 def wrap_deepmind(env, episode_life=True, clip_rewards=True, frame_stack=False, scale=False):
-    """Configure environment for DeepMind-style Atari.
-    """
+    """Configure environment for DeepMind-style Atari"""
     if episode_life:
         env = EpisodicLifeEnv(env)
     if 'FIRE' in env.unwrapped.get_action_meanings():

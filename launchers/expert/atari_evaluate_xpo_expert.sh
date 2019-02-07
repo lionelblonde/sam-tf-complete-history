@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Example: ./atari_evaluate_xpo_expert.sh <env_id> <xpo_pol_ckpt_dir_path>
+# Example: ./atari_evaluate_xpo_expert.sh <env_id> <xpo_pol_ckpt_dir_path> <num_trajs>
 
 cd ../..
 
@@ -15,7 +15,9 @@ python -m imitation.expert_algorithms.run_xpo_expert \
     --stride_shapes 4 2 \
     --hid_widths 128 \
     --hid_nonlin="leaky_relu" \
-    --num_trajs=20 \
+    --num_trajs=$3 \
     --no-sample_or_mode \
     --no-render \
+    --record \
+    --video_dir="data/videos" \
     --model_ckpt_dir=$2

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Example: ./atari_gail_evaluate.sh <env_id> <gail_pol_ckpt_dir_path>
+# Example: ./atari_gail_evaluate.sh <env_id> <gail_pol_ckpt_dir_path> <num_trajs>
 
 cd ../..
 
@@ -19,7 +19,9 @@ python -m imitation.imitation_algorithms.run_gail \
     --d_stride_shapes 4 2 \
     --d_hid_widths 128 \
     --hid_nonlin="tanh" \
-    --num_trajs=20 \
+    --num_trajs=$3 \
     --sample_or_mode \
     --no-render \
+    --record \
+    --video_dir="data/videos" \
     --model_ckpt_dir=$2

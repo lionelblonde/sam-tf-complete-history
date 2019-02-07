@@ -12,7 +12,6 @@ class MpiAdamOptimizer(tf.train.AdamOptimizer):
         consisting in averaging the gradients across mpi processes.
         """
         self.comm = comm
-        assert self.comm is not None, "define 'comm' before"
         self.clip_norm = clip_norm
         tf.train.AdamOptimizer.__init__(self, **kwargs)
 

@@ -1,7 +1,18 @@
 import numpy as np
+import tensorflow as tf
 import scipy.signal
 
 from imitation.common.console_util import columnize
+
+
+def huber_loss(x, delta=1.0, name='huber_loss'):
+    """Less sensitive to outliers than the l2 loss while being differentiable at 0
+    Reference: https://en.wikipedia.org/wiki/Huber_loss
+    """
+    with tf.variable_scope(name):
+        return tf.where(tf.abs(x) < delta,
+                        0.5 * tf.square(x),
+                        delta * (tf.abs(x) - 0.5 * delta))
 
 
 def meanv(x, axis=None):
@@ -101,67 +112,15 @@ def conjugate_gradient(f_Ax, b, cg_iters=50, residual_tol=1e-10, verbose=False):
 
 
 def explained_variance(ypred, y):
-    """Computes fraction of variance that `ypred` explains about `y`.
+    """Computes fraction of variance that 'ypred' explains about 'y'
     Returns 1 - Var[y-ypred] / Var[y]
 
     Interpretation:
         ev=0 => might as well have predicted zero
-        ev=1 => perfect prediciton
+        ev=1 => perfect prediction
         ev<0 => worse than just predicting zero
     """
     assert y.ndim == 1 and ypred.ndim == 1
     vary = np.var(y)
     out = 1 - np.var(y - ypred) / vary
     return np.nan if vary == 0 else out
-
-
-def explained_variance_2d(ypred, y):
-    assert y.ndim == 2 and ypred.ndim == 2
-    vary = np.var(y, axis=0)
-    out = 1 - np.var(y - ypred) / vary
-    out[vary < 1e-10] = 0
-    return out
-
-
-def ncc(ypred, y):
-    """Returns Pearson product-moment correlation coefficients.
-    Since we give `ypred` and `y` as input, the output matrix is of size (2, 2).
-    Diagonal elements are ones by definition, and the matrix is symmetric by definition.
-    The two non ones elements are [1, 0] and [0, 1] (and are equal) and represent the
-    correlation between prediction and `y`.
-    """
-    return np.corrcoef(ypred, y)[1, 0]
-
-
-def flatten_arrays(arrs):
-    return np.concatenate([arr.flat for arr in arrs])
-
-
-def unflatten_vector(vec, shapes):
-    i = 0
-    arrs = []
-    for shape in shapes:
-        size = np.prod(shape)
-        arr = vec[i:i + size].reshape(shape)
-        arrs.append(arr)
-        i += size
-    return arrs
-
-
-def discount_with_boundaries(x, ep_starts, gamma):
-    """Compute discounted sum along the 0-th dimension of the `x` ndarray,
-    while taking into account the start of each episode.
-    Return an ndarray `y` with the same shape as x, satisfying:
-        y[t] = x[t] + gamma * x[t+1] + gamma^2 * x[t+2] + ... + gamma^k * x[t+k],
-            where k = len(x) - t - 1
-    Args:
-        x (np.ndarray): 2-D array of floats, time x features
-        ep_starts (np.ndarray): 2-D array of bools, indicating when a new episode has started
-        gamma (float): Discount factor
-    """
-    y = np.zeros_like(x)
-    horizon = x.shape[0]
-    y[horizon - 1] = x[horizon - 1]
-    for t in range(horizon - 2, -1, -1):
-        y[t] = x[t] + gamma * y[t + 1] * (1 - ep_starts[t + 1])
-    return y

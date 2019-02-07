@@ -3,20 +3,7 @@
 
 cd ../..
 
-opts="-np $1"
-unamestr="$(uname)"
-if [[ ! "$unamestr" == "Darwin" ]]; then
-    opts="$opts --bind-to core"
-    nlogicores="$(nproc)"
-    echo "non-Darwin platform: binding processes to cores"
-else
-    nlogicores="$(sysctl -n hw.ncpu)"
-    echo "Darwin platform: not binding processes to cores"
-fi
-echo "$1 process(es), $nlogicores total logical cores"
-echo "mpi options: $opts"
-
-mpirun $opts python -m imitation.expert_algorithms.run_xpo_expert \
+mpirun -np $1 --allow-run-as-root python -m imitation.expert_algorithms.run_xpo_expert \
     --note="" \
     --env_id=$2 \
     --no-from_raw_pixels \

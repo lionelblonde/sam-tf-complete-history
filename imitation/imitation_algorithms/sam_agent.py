@@ -5,11 +5,12 @@ from gym import spaces
 
 from imitation.common import tf_util as U
 from imitation.common import abstract_module as my
-from imitation.common.sonnet_util import ActorNN, CriticNN
+from imitation.common.networks import ActorNN, CriticNN
+from imitation.common.math_util import huber_loss
 from imitation.common import logger
 from imitation.common.mpi_moments import mpi_mean_like
 from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
-from imitation.common.misc_util import onehotify, flatten_lists, fl32, zipsame
+from imitation.common.misc_util import onehotify, flatten_lists, zipsame
 from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.imitation_algorithms import memory as XP
 
@@ -205,7 +206,7 @@ class SAMAgent(my.AbstractModule):
             self.old_ret_stats = U.function([self.rews], [self.ret_rms.mean, self.ret_rms.std])
         self.get_targ_q = U.function([self.obs1, self.rews, self.dones1, self.td_len], self.targ_q)
 
-        # Set up components
+        # Set up training components
         if self.param_noise is not None:
             self.setup_param_noise()
         self.setup_replay_buffer()
@@ -420,7 +421,7 @@ class SAMAgent(my.AbstractModule):
 
         # Compute the 1-step look-ahead TD error loss
         self.td_errors_1 = self.critic_pred - self.tc1z
-        self.hubered_td_errors_1 = U.huber_loss(self.td_errors_1)
+        self.hubered_td_errors_1 = huber_loss(self.td_errors_1)
         if self.hps.prioritized_replay:
             self.hubered_td_errors_1 *= self.iws  # adjust with importance weights
             phs += [self.iws]
@@ -436,7 +437,7 @@ class SAMAgent(my.AbstractModule):
         if self.hps.n_step_returns:
             # Compute the n-step look-ahead TD error loss
             self.td_errors_n = self.critic_pred - self.tcnz
-            self.hubered_td_errors_n = U.huber_loss(self.td_errors_n)
+            self.hubered_td_errors_n = huber_loss(self.td_errors_n)
             if self.hps.prioritized_replay:
                 self.hubered_td_errors_n *= self.iws  # adjust with importance weights
             self.td_loss_n = tf.reduce_mean(self.hubered_td_errors_n)
@@ -526,8 +527,8 @@ class SAMAgent(my.AbstractModule):
             # Unpack weight and bias of output layer
             w, b = output_vars
             # Ensure that w is indeed a weight, and that b is indeed a bias
-            assert 'w' in w.name, "'w' not in w.name"
-            assert 'b' in b.name, "'b' not in b.name"
+            assert 'kernel' in w.name, "'w' not in w.name"
+            assert 'bias' in b.name, "'b' not in b.name"
             # Ensure that both w and b are compatible w/ the critic spitting out a scalar
             assert w.get_shape()[-1] == 1
             assert b.get_shape()[-1] == 1
@@ -581,7 +582,7 @@ class SAMAgent(my.AbstractModule):
         b_acs = batch['acs']
         b_obs1 = batch['obs1']
         b_rews = batch['rews']
-        b_dones1 = fl32(batch['dones1'])
+        b_dones1 = batch['dones1'].astype(dtype='float32')
         if self.hps.n_step_returns:
             b_td_len = batch['td_len']
         if self.hps.prioritized_replay:

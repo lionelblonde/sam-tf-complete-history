@@ -471,9 +471,6 @@ def learn(comm,
                 # Update discriminator
                 optimize_d(ob_agent, ac_agent, ob_expert, ac_expert)
 
-                # Assess consistency of accuracies
-                assert d.assert_acc_consistency(ob_agent, ac_agent, ob_expert, ac_expert)
-
         # Assemble discriminator losses
         logger.info("logging d training losses (log)")
         d_losses_np_mean = np.mean(d_losses, axis=0)

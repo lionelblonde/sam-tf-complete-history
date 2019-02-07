@@ -5,7 +5,8 @@ from gym import spaces
 
 from imitation.common import tf_util as U
 from imitation.common import abstract_module as my
-from imitation.common.sonnet_util import RewardNN
+from imitation.common.distributions import BernoulliPd
+from imitation.common.networks import RewardNN
 from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
 
 
@@ -71,7 +72,8 @@ class Discriminator(my.AbstractModule):
         # `scores` define the conditional distribution D(s,a) := p(label|(state,action))
 
         # Create entropy loss
-        self.ent_mean = tf.reduce_mean(U.logit_bernoulli_entropy(logits=self.scores))
+        self.bernouilli_pd = BernoulliPd(logits=self.scores)
+        self.ent_mean = tf.reduce_mean(self.bernouilli_pd.entropy())
         self.ent_loss = -self.hps.ent_reg_scale * self.ent_mean
 
         # Create labels
@@ -98,32 +100,28 @@ class Discriminator(my.AbstractModule):
                                                  minval=soft_real_l_b, maxval=soft_real_u_b)
         self.labels = tf.concat([self.fake_labels, self.real_labels], axis=0)
 
-        # Build accuracies
-        weights = [1.0 * tf.ones_like(self.p_scores) / U.batch_size(self.p_scores),
-                   1.0 * tf.ones_like(self.e_scores) / U.batch_size(self.e_scores)]
-        # HAXX: multiply by 1.0 to cast to float
-        self.weights = tf.concat(weights, axis=0)
-        classification_0_1_scores = tf.to_float((self.scores < 0) == (self.labels == 0))
-        self.accuracy = 0.5 * tf.reduce_sum(self.weights * classification_0_1_scores)
+        # # Build accuracies
         self.p_acc = tf.reduce_mean(tf.sigmoid(self.p_scores))
         self.e_acc = tf.reduce_mean(tf.sigmoid(self.e_scores))
-        self.consistency = tf.norm(self.accuracy - (0.5 * (self.p_acc + self.e_acc))) < 1e-8
-        self.assert_acc_consistency = U.function([p_obs, p_acs, e_obs, e_acs], [self.consistency])
 
-        # Build binary classification losses
-        self.p_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=self.p_scores,
-                                                              labels=self.fake_labels)
-        self.p_loss_mean = tf.reduce_mean(self.p_loss)
-        self.e_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=self.e_scores,
-                                                              labels=self.real_labels)
-        self.e_loss_mean = tf.reduce_mean(self.e_loss)
+        # Build binary classification (cross-entropy) losses, equal to the negative log likelihood
+        # for random variables following a Bernoulli law, divided by the batch size
+        self.p_bernoulli_pd = BernoulliPd(logits=self.p_scores)
+        self.p_loss_mean = tf.reduce_mean(self.p_bernoulli_pd.neglogp(self.fake_labels))
+        self.e_bernoulli_pd = BernoulliPd(logits=self.e_scores)
+        self.e_loss_mean = tf.reduce_mean(self.e_bernoulli_pd.neglogp(self.real_labels))
 
         # Add a gradient penalty (motivation from WGANs (Gulrajani),
         # but empirically useful in JS-GANs (Lucic et al. 2017))
-        shape_obz = (tf.to_int64(U.batch_size(p_obz)),) + self.ob_shape
+
+        def batch_size(x):
+            """Returns an int corresponding to the batch size of the input tensor"""
+            return tf.to_float(tf.shape(x)[0], name='get_batch_size_in_fl32')
+
+        shape_obz = (tf.to_int64(batch_size(p_obz)),) + self.ob_shape
         eps_obz = tf.random_uniform(shape=shape_obz, minval=0.0, maxval=1.0)
         obz_interp = eps_obz * p_obz + (1. - eps_obz) * e_obz
-        shape_acs = (tf.to_int64(U.batch_size(p_acs)),) + self.ac_shape
+        shape_acs = (tf.to_int64(batch_size(p_acs)),) + self.ac_shape
         eps_acs = tf.random_uniform(shape=shape_acs, minval=0.0, maxval=1.0)
         acs_interp = eps_acs * p_acs + (1. - eps_acs) * e_acs
         self.interp_scores = self.reward_nn(obz_interp, acs_interp)
@@ -144,8 +142,7 @@ class Discriminator(my.AbstractModule):
         self.loss_names = ["policy_loss", "expert_loss", "ent_mean", "ent_loss",
                            "policy_acc", "expert_acc", "pd_grad_pen"]
         self.loss_names = ["d_" + e for e in self.loss_names]
-        p_e_losses = tf.concat([self.p_loss, self.e_loss], axis=0)
-        self.loss = tf.reduce_sum(self.weights * p_e_losses) + self.ent_loss + 10 * self.grad_pen
+        self.loss = self.p_loss_mean + self.e_loss_mean + self.ent_loss + 10 * self.grad_pen
         # gradient penalty coefficient aligned with the value used in Gulrajani et al.
 
         # Create Theano-like op that computes the discriminator losses
@@ -155,7 +152,7 @@ class Discriminator(my.AbstractModule):
                                                    self.trainable_vars,
                                                    self.hps.clip_norm))
 
-        # Create Theano-like op that compute the synthetic reward
+        # Define synthetic reward
         if self.hps.non_satur_grad:
             # Recommended in the original GAN paper and later in Fedus et al. 2017 (Many Paths...)
             # 0 for expert-like states, goes to -inf for non-expert-like states
@@ -167,6 +164,8 @@ class Discriminator(my.AbstractModule):
             # compatible with envs with traj cutoffs for bad (non-expert-like) behavior
             # e.g. walking simulations that get cut off when the robot falls over
             self.reward = -tf.log(1. - tf.sigmoid(self.p_scores) + 1e-8)  # HAXX: avoids log(0)
+
+        # Create Theano-like op that compute the synthetic reward
         self.compute_reward = U.function([p_obs, p_acs], self.reward)
 
         # Summarize module information in logs

@@ -1,3 +1,4 @@
+from os import makedirs
 import os.path as osp
 
 import gym.spaces  # noqa
@@ -22,6 +23,8 @@ def train_xpo_expert(args):
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args, comm=comm)
     experiment.configure_logging()
+    # Create experiment name
+    experiment_name = experiment.get_long_name()
 
     # Seedify
     rank = comm.Get_rank()
@@ -33,9 +36,6 @@ def train_xpo_expert(args):
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)
-
-    # Create experiment name
-    experiment_name = experiment.get_long_name()
 
     # Train XPO expert policy
     if args.algo == 'ppo':
@@ -56,7 +56,7 @@ def train_xpo_expert(args):
                   clipping_eps=args.clipping_eps,
                   gae_lambda=args.gae_lambda,
                   schedule=args.schedule,
-                  max_timesteps=args.num_timesteps)
+                  max_timesteps=int(args.num_timesteps))
     elif args.algo == 'trpo':
         trpo.learn(comm=comm,
                    env=env,
@@ -76,7 +76,7 @@ def train_xpo_expert(args):
                    cg_damping=args.cg_damping,
                    vf_iters=args.vf_iters,
                    vf_lr=args.vf_lr,
-                   max_timesteps=args.num_timesteps)
+                   max_timesteps=int(args.num_timesteps))
     else:
         raise RuntimeError("unknown algorithm")
 
@@ -86,6 +86,8 @@ def train_xpo_expert(args):
 
 def evaluate_xpo_expert(args):
     """Evaluate a trained XPO expert policy"""
+    assert args.render + args.record <= 1, "either record video or render"
+
     # Create a single-threaded session
     U.single_threaded_session().__enter__()
 
@@ -97,6 +99,20 @@ def evaluate_xpo_expert(args):
     set_global_seeds(args.seed)
     # Create environment
     env = make_env(args.env_id, args.seed, args.task, args.horizon)
+
+    if args.record:
+        # Create experiment name
+        experiment_name = experiment.get_long_name()
+        save_dir = osp.join(args.video_dir, experiment_name)
+        makedirs(save_dir, exist_ok=True)
+        # Wrap the environment again to record videos
+        from imitation.common.video_recorder_wrapper import VideoRecorder
+        video_length = args.horizon if args.horizon is not None else env.env._max_episode_steps
+        env = VideoRecorder(env=env,
+                            save_dir=save_dir,
+                            record_video_trigger=lambda x: x % x == 0,  # record at the very start
+                            video_length=video_length,
+                            prefix="video_{}".format(args.env_id))
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)

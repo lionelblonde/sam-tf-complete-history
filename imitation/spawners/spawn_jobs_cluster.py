@@ -73,7 +73,7 @@ ATARI_EXPERT_DEMOS = ['BreakoutNoFrameskip-v4_s0_mode_d32.npz']
 
 
 def fmt_path(args, meta, dir_):
-    """Transform as relative path into an absolute path"""
+    """Transform a relative path into an absolute path"""
     relative_path = osp.join("data/{}".format(meta), dir_)
     if args.cluster == 'cscs' and args.docker:
         return osp.join("/code/sam-tf", relative_path)
@@ -134,7 +134,7 @@ def get_rand_hps(args, meta):
     """Return a list of maps of hyperparameters selected by random search
     Example of hyperparameter dictionary:
         {'hid_widths': rand_tuple_from_list([(64, 64)]),  # list of tuples
-         'hid_nonlin': np.random.choice(['relu']),
+         'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
          'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
          'tau': np.random.choice([0.001, 0.01]),
          'with_layernorm': 1,
@@ -162,7 +162,7 @@ def get_rand_hps(args, meta):
                      'filter_shapes': (8, 4),
                      'stride_shapes': (4, 2),
                      'hid_widths': (128,),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'gaussian_fixed_var': 1,
                      'with_layernorm': 0,
@@ -240,7 +240,7 @@ def get_rand_hps(args, meta):
                      'd_filter_shapes': (8, 4),
                      'd_stride_shapes': (4, 2),
                      'd_hid_widths': (128,),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'tau': 0.01,
                      'with_layernorm': 1,
@@ -294,7 +294,7 @@ def get_rand_hps(args, meta):
                      'optim_epochs_per_iter': 10,
                      'sample_or_mode': 1,
                      'hid_widths': (64, 64),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'gaussian_fixed_var': 1,
                      'with_layernorm': 0,
@@ -361,7 +361,7 @@ def get_rand_hps(args, meta):
                      'non_satur_grad': 0,
                      'actorcritic_hid_widths': (64, 64),
                      'd_hid_widths': (64, 64),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'tau': 0.01,
                      'with_layernorm': 1,
@@ -406,7 +406,7 @@ def get_spectrum_hps(args, meta, num_seeds):
     and spanning the specified range of seeds
     Example of hyperparameter dictionary:
         {'hid_widths': rand_tuple_from_list([(64, 64)]),  # list of tuples
-         'hid_nonlin': np.random.choice(['relu']),
+         'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
          'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
          'tau': np.random.choice([0.001, 0.01]),
          'with_layernorm': 1,
@@ -434,7 +434,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'filter_shapes': (8, 4),
                      'stride_shapes': (4, 2),
                      'hid_widths': (128,),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'gaussian_fixed_var': 1,
                      'with_layernorm': 0,
@@ -509,7 +509,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'd_filter_shapes': (8, 4),
                      'd_stride_shapes': (4, 2),
                      'd_hid_widths': (128,),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'tau': 0.01,
                      'with_layernorm': 1,
@@ -563,7 +563,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'optim_epochs_per_iter': 10,
                      'sample_or_mode': 1,
                      'hid_widths': (64, 64),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'gaussian_fixed_var': 1,
                      'with_layernorm': 0,
@@ -626,7 +626,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'non_satur_grad': 0,
                      'actorcritic_hid_widths': (64, 64),
                      'd_hid_widths': (64, 64),
-                     'hid_nonlin': 'relu',
+                     'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
                      'tau': 0.01,
                      'with_layernorm': 1,
@@ -821,7 +821,7 @@ def format_job_str(args, job_map, run_str):
         bash_script_str = ('#!/usr/bin/env bash\n\n')
         bash_script_str += ('# job name: {}\n\n')
         # Launch command
-        bash_script_str += ('mpirun -np {} {}')
+        bash_script_str += ('mpirun -np {} --allow-run-as-root {}')
         return bash_script_str.format(job_map['job-name'],
                                       job_map['ntasks'],
                                       run_str)
