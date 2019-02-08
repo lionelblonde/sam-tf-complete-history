@@ -81,7 +81,10 @@ def imitate_via_sam(args):
               training_steps_per_iter=args.training_steps_per_iter,
               eval_steps_per_iter=args.eval_steps_per_iter,
               render=args.render,
-              max_timesteps=int(args.num_timesteps))
+              max_timesteps=int(args.num_timesteps),
+              preload=args.preload,
+              exact_model_path=args.exact_model_path,
+              model_ckpt_dir=args.model_ckpt_dir)
 
     # Close environment
     env.close()

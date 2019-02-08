@@ -227,7 +227,13 @@ def learn(comm,
           render,
           max_timesteps=0,
           max_episodes=0,
-          max_iters=0):
+          max_iters=0,
+          preload=False,
+          exact_model_path=None,
+          model_ckpt_dir=None):
+
+    # Only one of the two arguments can be provided
+    assert sum([exact_model_path is None, model_ckpt_dir is None]) <= 1
 
     rank = comm.Get_rank()
 
@@ -252,6 +258,16 @@ def learn(comm,
 
     # Initialise variables
     U.initialize()
+
+    if preload:
+        # Load tensor values from previous run
+        if exact_model_path is not None:
+            U.load_model(exact_model_path)
+            logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
+        else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
+            U.load_latest_checkpoint(model_ckpt_dir)
+            logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
+
     # Sync params of all processes with the params of the root process...
     # ... for the policy
     mu.sync_from_root()

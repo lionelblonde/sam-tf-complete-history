@@ -59,4 +59,6 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --td_loss_n_scale=1. \
     --wd_scale=1e-3 \
     --n_step_returns \
-    --n=96
+    --n=96 \
+    --no-preload \
+    --model_ckpt_dir=$5

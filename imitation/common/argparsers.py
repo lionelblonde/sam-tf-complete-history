@@ -247,6 +247,7 @@ def sam_argparser(description="SAM Experiment"):
                         default=None)
     parser.add_argument('--save_frequency', help='save model every xx iterations',
                         type=int, default=100)
+    boolean_flag(parser, 'preload', help='whether to preload with trained tensors', default=False)
     parser.add_argument('--num_timesteps', help='cummulative number of timesteps since launch',
                         type=int, default=int(1e6))
     parser.add_argument('--timesteps_per_batch', help='number of interactions per iteration',

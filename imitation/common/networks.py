@@ -2,7 +2,6 @@ import tensorflow as tf
 
 from gym import spaces
 
-from imitation.common import tf_util as U
 from imitation.common.network_util import layer_norm, weight_decay_regularizer
 from imitation.common.network_util import parse_nonlin, parse_initializer
 from imitation.common.misc_util import zipsame
