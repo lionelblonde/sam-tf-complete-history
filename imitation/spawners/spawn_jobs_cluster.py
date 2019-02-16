@@ -678,6 +678,7 @@ def get_spectrum_hps(args, meta, num_seeds):
 
 def unroll_options(hpmap):
     """Transform the dictionary of hyperparameters into a string of bash options"""
+    indent = 4 * ' '  # indents are defined as 4 spaces
     base_str = ""
     no_value_keys = ['from_raw_pixels',
                      'rmsify_obs',
@@ -698,15 +699,15 @@ def unroll_options(hpmap):
                      'n_step_returns']
     for k, v in hpmap.items():
         if k in no_value_keys and v == 0:
-            base_str += " --no-{}".format(k)
+            base_str += "{}--no-{} \\\n".format(indent, k)
             continue
         elif k in no_value_keys:
-            base_str += " --{}".format(k)
+            base_str += "{}--{} \\\n".format(indent, k)
             continue
         if isinstance(v, tuple):
-            base_str += " --{} ".format(k) + " ".join(str(v_) for v_ in v)
+            base_str += "{}--{} ".format(indent, k) + " ".join(str(v_) for v_ in v) + ' \\\n'
             continue
-        base_str += " --{}={}".format(k, v)
+        base_str += "{}--{}={} \\\n".format(indent, k, v)
     return base_str
 
 
@@ -719,6 +720,7 @@ def format_job_str(args, job_map, run_str):
     message += "in Singularity/Shifter, breaks mpi4py in the python code. "
     message += "PITA to solve, for little gains: inter-container MPI comms not supported. "
     assert not (args.mpi and args.docker), message
+
     if args.cluster == 'baobab':
         assert args.docker, "Baobab's everything is old. Docker usage forced."
         # Set sbatch config
@@ -757,7 +759,7 @@ def format_job_str(args, job_map, run_str):
                                       job_map['partition'],
                                       job_map['ntasks'],
                                       job_map['time'],
-                                      run_str)
+                                      run_str)[:-2]
 
     elif args.cluster == 'cscs':
         # Set sbatch config
@@ -814,7 +816,7 @@ def format_job_str(args, job_map, run_str):
                                       job_map['partition'],
                                       job_map['ntasks'],
                                       job_map['time'],
-                                      run_str)
+                                      run_str)[:-2]
 
     elif args.cluster == 'gengar':
         # Set header
@@ -824,7 +826,10 @@ def format_job_str(args, job_map, run_str):
         bash_script_str += ('mpirun -np {} --allow-run-as-root {}')
         return bash_script_str.format(job_map['job-name'],
                                       job_map['ntasks'],
-                                      run_str)
+                                      run_str)[:-2]
+
+    else:
+        raise NotImplementedError("cluster selected is not covered")
 
 
 def format_exp_str(args, hpmap):
@@ -840,7 +845,7 @@ def format_exp_str(args, hpmap):
 
     pre = "cd /code/sam-tf && " if args.cluster == 'cscs' and args.docker else ''
 
-    return "{}python -m {}{}".format(pre, script, hpmap_str)
+    return "{}python -m {} \\\n{}".format(pre, script, hpmap_str)
 
 
 def get_job_map(args, meta, i, env, seed, num_demos, type_exp):

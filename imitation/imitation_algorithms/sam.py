@@ -232,8 +232,9 @@ def learn(comm,
           exact_model_path=None,
           model_ckpt_dir=None):
 
-    # Only one of the two arguments can be provided
-    assert sum([exact_model_path is None, model_ckpt_dir is None]) <= 1
+    # If preload = True (1), only one should be specified (sum = 1)
+    # If preload = False (0), none should be specified (sum = 0)
+    assert sum([exact_model_path is not None, model_ckpt_dir is not None]) == preload
 
     rank = comm.Get_rank()
 

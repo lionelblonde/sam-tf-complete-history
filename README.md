@@ -1,12 +1,16 @@
 # SAM: Sample-efficient Adversarial Mimic
 
-ArXiv link: [Sample-efficient Imitation Learning via Generative Adversarial Nets](
-https://arxiv.org/abs/1809.02064)
+Code associated with our work:
+"Sample-efficient Imitation Learning via Generative Adversarial Nets",
 
-# How to launch?
+Published in AISTATS 2019.
+
+[arXiv link](https://arxiv.org/abs/1809.02064)
+
+# How to
 
 Launching scripts are available in `/launchers`.
 
 ## Acknowledgments
 
-Code initially inspired from [openai/baselines](https://github.com/openai/baselines)
+Some utilities were inspired from [openai/baselines](https://github.com/openai/baselines).
