@@ -10,7 +10,6 @@
         --partition=shared-gpu \
         --time=12:00:00 \
         --num_seeds=5 \
-        --docker \
         --no-call \
         --no-rand
 
@@ -46,7 +45,6 @@ parser.add_argument('--partition', type=str, default=None, help="partition to la
 parser.add_argument('--time', type=str, default=None, help="duration of the jobs")
 parser.add_argument('--num_seeds', type=int, default=5,
                     help="amount of seeds across which jobs are replicated ('range(num_seeds)'')")
-boolean_flag(parser, 'docker', default=True, help="whether to run through docker containers")
 boolean_flag(parser, 'call', default=False, help="whether to launch the jobs once created")
 boolean_flag(parser, 'rand', default=False, help="whether to perform hyperparameter search")
 args = parser.parse_args()
@@ -74,11 +72,7 @@ ATARI_EXPERT_DEMOS = ['BreakoutNoFrameskip-v4_s0_mode_d32.npz']
 
 def fmt_path(args, meta, dir_):
     """Transform a relative path into an absolute path"""
-    relative_path = osp.join("data/{}".format(meta), dir_)
-    if args.cluster == 'cscs' and args.docker:
-        return osp.join("/code/sam-tf", relative_path)
-    else:
-        return relative_path
+    return osp.join("data/{}".format(meta), dir_)
 
 
 def dup_hps_for_env(hpmap, env):
@@ -95,9 +89,6 @@ def dup_hps_for_env_w_demos(args, hpmap, env, demos):
     for the keys 'env_id' and 'expert_path'
     """
     demos = osp.join("DEMOS", demos)
-    if args.cluster == 'cscs' and args.docker:
-        # Prepend full container path to the demos arxis
-        demos = osp.join("/code/sam-tf", demos)
     hpmap_ = copy(hpmap)
     hpmap_.update({'env_id': env})
     hpmap_.update({'expert_path': demos})
@@ -713,16 +704,8 @@ def unroll_options(hpmap):
 
 def format_job_str(args, job_map, run_str):
     """Build the batch script that launches a job"""
-    message = "MuJoCo bugged for Singularity/Shifter (looks for bins + license in host's ~) "
-    message += "-> https://github.com/openai/mujoco-py/issues/295"
-    assert not (args.benchmark == 'mujoco' and args.docker), message
-    message = "MPICH install in container, necessary for inter-container comm "
-    message += "in Singularity/Shifter, breaks mpi4py in the python code. "
-    message += "PITA to solve, for little gains: inter-container MPI comms not supported. "
-    assert not (args.mpi and args.docker), message
 
     if args.cluster == 'baobab':
-        assert args.docker, "Baobab's everything is old. Docker usage forced."
         # Set sbatch config
         bash_script_str = ('#!/usr/bin/env bash\n\n')
         bash_script_str += ('#SBATCH --job-name={}\n'
@@ -737,8 +720,7 @@ def format_job_str(args, job_map, run_str):
                                 '#SBATCH --constraint="{}"\n'.format(contraint))
         bash_script_str += ('\n')
         # Load modules
-        bash_script_str += ('module load GCC/6.3.0-2.27\n'
-                            'module load Singularity/2.4.2\n')
+        bash_script_str += ('module load GCC/6.3.0-2.27\n')
         if args.device == 'gpu':
             bash_script_str += ('module load CUDA\n')
         bash_script_str += ('\n')
@@ -747,12 +729,6 @@ def format_job_str(args, job_map, run_str):
             bash_script_str += ('mpirun ')
         else:
             bash_script_str += ('srun ')
-        bash_script_str += ('singularity --debug exec ')
-        if args.device == 'gpu':
-            bash_script_str += ('--nv ')
-            bash_script_str += ('/home/blonde0/docker_images/docker-sam-tf-gpu ')
-        elif args.device == 'cpu':
-            bash_script_str += ('/home/blonde0/docker_images/docker-sam-tf-cpu ')
         bash_script_str += ('{}')
 
         return bash_script_str.format(job_map['job-name'],
@@ -772,45 +748,12 @@ def format_job_str(args, job_map, run_str):
                             '#SBATCH --constraint=gpu\n\n')
         # Load modules
         bash_script_str += ('module load daint-gpu\n')
-        if args.docker:
-            bash_script_str += ('module load shifter-ng\n')
         bash_script_str += ('\n')
         # Launch command
-        if args.docker:
-            bash_script_str += ('srun shifter --debug ')
-            if args.mpi:
-
-                bash_script_str += ('--mpi ')
-            bash_script_str += ('run ')
-            bash_script_str += ('--mount='
-                                'type=bind,'
-                                'source=/users/lblonde/Code/seil-tf/imitation,'
-                                'destination=/code/sam-tf/imitation ')
-            bash_script_str += ('--mount='
-                                'type=bind,'
-                                'source=/users/lblonde/Code/seil-tf/launchers,'
-                                'destination=/code/sam-tf/launchers ')
-            bash_script_str += ('--mount='
-                                'type=bind,'
-                                'source=/users/lblonde/Code/seil-tf/data,'
-                                'destination=/code/sam-tf/data ')
-            bash_script_str += ('--mount='
-                                'type=bind,'
-                                'source=/users/lblonde/Code/seil-tf/DEMOS,'
-                                'destination=/code/sam-tf/DEMOS ')
-            if args.device == 'gpu':
-                bash_script_str += ('lionelblonde/docker-sam-tf-gpu:latest ')
-            elif args.device == 'cpu':
-                bash_script_str += ('lionelblonde/docker-sam-tf-cpu:latest ')
-            bash_script_str += ('bash -c "{}"')
+        if args.mpi:
+            bash_script_str += ('mpirun {}')
         else:
-            assert args.benchmark == 'mujoco', "Can only go the non-docker way with MuJoCo."
-            assert args.device == 'cpu', "Continuous control always faster on CPU. \
-                                          GPU usage prevented."
-            if args.mpi:
-                bash_script_str += ('mpirun {}')
-            else:
-                bash_script_str += ('srun {}')
+            bash_script_str += ('srun {}')
 
         return bash_script_str.format(job_map['job-name'],
                                       job_map['partition'],
@@ -843,9 +786,7 @@ def format_exp_str(args, hpmap):
     elif args.task == 'sam':
         script = "imitation.imitation_algorithms.run_sam"
 
-    pre = "cd /code/sam-tf && " if args.cluster == 'cscs' and args.docker else ''
-
-    return "{}python -m {} \\\n{}".format(pre, script, hpmap_str)
+    return "python -m {} \\\n{}".format(script, hpmap_str)
 
 
 def get_job_map(args, meta, i, env, seed, num_demos, type_exp):
