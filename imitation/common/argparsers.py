@@ -308,8 +308,6 @@ def sam_argparser(description="SAM Experiment"):
     parser.add_argument('--rew_aug_coeff', type=float, default=0.)
     parser.add_argument('--param_noise_adaption_frequency', type=float, default=50)
     parser.add_argument('--tau', type=float, default=0.001, help='target networks tracking speed')
-    parser.add_argument('--sr_loss_scale', type=float, default=1.)
-    parser.add_argument('--q_loss_scale', type=float, default=1.)
     parser.add_argument('--wd_scale', help='critic wd scale', type=float, default=0.001)
     parser.add_argument('--td_loss_1_scale', type=float, default=1.)
     parser.add_argument('--td_loss_n_scale', type=float, default=1.)

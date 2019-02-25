@@ -82,7 +82,7 @@ class ExperimentInitializer:
     def get_long_name(self):
         """Assemble long experiment name"""
         name = self.get_short_name()
-        if self.args.task in ['imitate_via_gail', 'imitate_via_sam']:
+        if 'imitate' in self.args.task:
             name += "{}.".format(self.args.task)
             assert self.args.num_demos != np.inf, "num demos must be finite"
             name += "num_demos_{}.".format(self.args.num_demos)

@@ -1,6 +1,8 @@
 import random
 from math import floor
+
 import numpy as np
+
 from imitation.common import math_util as M
 from imitation.common import logger
 from imitation.common.misc_util import zipsame
@@ -64,7 +66,6 @@ class RB(object):
         self.num_demos = 0
         self.atom_names = ['obs0', 'acs', 'rews', 'dones1', 'obs1']
         self.atom_shapes = [self.ob_shape, self.ac_shape, (1,), (1,), self.ob_shape]
-        logger.info("atom shapes: {}".format(self.atom_shapes))
         # Create one `RingBuffer` object for every atom in a transition
         self.ring_buffers = {atom_name: RingBuffer(self.limit, atom_shape)
                              for atom_name, atom_shape in zipsame(self.atom_names,

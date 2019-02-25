@@ -17,7 +17,7 @@ from imitation.common.summary_util import CustomSummary
 from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce, mpi_moments
 
 
-def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, expert_dataset, rank):
+def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, expert_dataset):
 
     def reset_with_demos_():
         """Get an observation from expert demos"""
@@ -286,16 +286,16 @@ def learn(comm,
         # Create summary writer
         writer = U.file_writer(summary_dir)
         # Create the summary
-        _names = []
+        names = []
         ep_stats_names = ['ep_length', 'ep_syn_ret', 'ep_env_ret']
-        _names.extend(ep_stats_names)
+        names.extend(ep_stats_names)
         if mu.param_noise is not None:
             pn_names = ['pn_cur_std', 'pn_dist']
-            _names.extend(pn_names)
-        mu_l_names = [*mu.actor_names, *mu.critic_names]
-        _names.extend(mu_l_names)
-        _names.extend(d.loss_names)
-        _summary = CustomSummary(scalar_keys=_names, family="sam")
+            names.extend(pn_names)
+        names.extend(mu.actor_names)
+        names.extend(mu.critic_names)
+        names.extend(d.loss_names)
+        summary = CustomSummary(scalar_keys=names, family="sam")
 
     if isinstance(env.action_space, spaces.Box):
         # Logging the action scale + performing shape sanity check
@@ -306,9 +306,9 @@ def learn(comm,
 
     # Create segment generator for training the agent
     assert 0 <= rew_aug_coeff <= 1
-    _expert_dataset = expert_dataset if reset_with_demos else None
+    expert_dataset_ = expert_dataset if reset_with_demos else None
     seg_gen = traj_segment_generator(env, mu, d, timesteps_per_batch,
-                                     rew_aug_coeff, _expert_dataset, rank)
+                                     rew_aug_coeff, expert_dataset_)
     if eval_env is not None:
         # Create episode generator for evaluating the agent
         eval_ep_gen = traj_ep_generator(eval_env, mu, d, render)
@@ -512,33 +512,6 @@ def learn(comm,
 
         # Log statistics
 
-        # Specify a width for each column of the two following tables
-        column_widths = [20, 16, 16]
-
-        logger.info("logging training losses (log)")
-        # Assemble agent losses
-        actor_avg_l = mpi_mean_reduce(list(actor_losses_buffer), comm)
-        critic_avg_l = mpi_mean_reduce(list(critic_losses_buffer), comm)
-        # Assemble discriminator losses
-        d_avg_l = mpi_mean_reduce(list(d_losses_buffer), comm)
-        # Reorganize for table formatting
-        all_agg_l_names = [mu.actor_names[-1]] + [mu.critic_names[-1]]
-        all_agg_l = [actor_avg_l[-1]] + [critic_avg_l[-1]]
-        all_sub_l_names = mu.actor_names[:-1] + mu.critic_names[:-1]
-        actor_sub_us_l = list(actor_avg_l[:(len(actor_avg_l) - 1) // 2])
-        critic_sub_us_l = list(critic_avg_l[:(len(critic_avg_l) - 1) // 2])
-        all_sub_us_l = actor_sub_us_l + critic_sub_us_l  # unscaled
-        actor_sub_s_l = list(actor_avg_l[(len(actor_avg_l) - 1) // 2:-1])
-        critic_sub_s_l = list(critic_avg_l[(len(critic_avg_l) - 1) // 2:-1])
-        all_sub_s_l = actor_sub_s_l + critic_sub_s_l  # scaled
-
-        zipped_losses = zipsame(all_sub_l_names + all_agg_l_names + d.loss_names,
-                                all_sub_us_l + all_agg_l + list(d_avg_l),
-                                all_sub_s_l + ['N.A.'] * 2 + ['N.A.'] * 7)  # to maintain symmetry
-        logger.info(columnize(names=['name', 'unscaled', 'scaled'],
-                              tuples=zipped_losses,
-                              widths=column_widths))
-
         logger.info("logging misc training stats (log)")
         # Initialize lists
         _stats_n = []  # names
@@ -621,7 +594,7 @@ def learn(comm,
         # Log the dictionaries into one table
         logger.info(columnize(names=['name', 'local', 'global'],
                               tuples=zipped_nlg,
-                              widths=column_widths))
+                              widths=[24, 16, 16]))
 
         if eval_env is not None:
             # Use the logger object to log the eval stats (will appear in `progress{}.csv`)
@@ -662,13 +635,15 @@ def learn(comm,
             # Add param noise stats to summary
             pn_summary = [pn_cur_std_mpi_mean, pn_dist_mpi_mean]
             all_summaries.extend(pn_summary)
-        # Add all the scaled sublosses and the aggregated losses
-        mu_avg_l_summary = (actor_sub_s_l + [actor_avg_l[-1]] +
-                            critic_sub_s_l + [critic_avg_l[-1]])
-        all_summaries.extend(mu_avg_l_summary)
-        d_avg_l_summary = [*d_avg_l]
-        all_summaries.extend(d_avg_l_summary)
+        # Add losses
+        actor_mean_losses = mpi_mean_reduce(list(actor_losses_buffer), comm)
+        critic_mean_losses = mpi_mean_reduce(list(critic_losses_buffer), comm)
+        d_mean_losses = mpi_mean_reduce(list(d_losses_buffer), comm)
+        mean_losses_summary = (list(actor_mean_losses) +
+                               list(critic_mean_losses) +
+                               list(d_mean_losses))
+        all_summaries.extend(mean_losses_summary)
 
         if rank == 0:
-            assert len(_names) == len(all_summaries), "mismatch in list lengths"
-            _summary.add_all_summaries(writer, all_summaries, iters_so_far)
+            assert len(names) == len(all_summaries), "mismatch in list lengths"
+            summary.add_all_summaries(writer, all_summaries, iters_so_far)

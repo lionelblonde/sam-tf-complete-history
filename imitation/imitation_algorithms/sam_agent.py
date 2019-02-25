@@ -10,7 +10,7 @@ from imitation.common.math_util import huber_loss
 from imitation.common import logger
 from imitation.common.mpi_moments import mpi_mean_like
 from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
-from imitation.common.misc_util import onehotify, flatten_lists, zipsame
+from imitation.common.misc_util import onehotify, zipsame
 from imitation.common.mpi_adam import MpiAdamOptimizer
 from imitation.imitation_algorithms import memory as XP
 
@@ -118,9 +118,9 @@ class SAMAgent(my.AbstractModule):
             self.pn_std = tf.placeholder(name='pn_std', dtype=tf.float32, shape=())
 
         # Create main actor and critic (need XOR-different name)
-        self.actor = ActorNN(scope=self.scope, name='adc_actor',
+        self.actor = ActorNN(scope=self.scope, name='online_actor',
                              ac_space=self.ac_space, hps=self.hps)
-        self.critic = CriticNN(scope=self.scope, name='adc_critic', hps=self.hps)
+        self.critic = CriticNN(scope=self.scope, name='online_critic', hps=self.hps)
         # Create target actor and critic
         self.targ_actor = ActorNN(scope=self.scope, name='targ_actor',
                                   ac_space=self.ac_space, hps=self.hps)
@@ -168,10 +168,10 @@ class SAMAgent(my.AbstractModule):
 
         # Build graphs
 
-        # Actor prediction from observation input
+        # Actor prediction from state input
         self.actor_pred = self.clip_acs(self.actor(self.obz0))
 
-        # Critic prediction from observation and state inputs
+        # Critic prediction from state and action inputs
         self.critic_pred = self.clip_rets(self.critic(self.obz0, self.acs))
         if self.hps.rmsify_rets:
             self.critic_pred = self.dermsify(self.critic_pred, self.ret_rms)
@@ -298,8 +298,12 @@ class SAMAgent(my.AbstractModule):
             _ac_shape = ()
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
-        xp_params = dict(limit=self.hps.mem_size, ob_shape=self.ob_shape, ac_shape=_ac_shape)
-        extra_xp_params = dict(alpha=self.hps.alpha, beta=self.hps.beta, ranked=self.hps.ranked)
+        xp_params = {'limit': self.hps.mem_size,
+                     'ob_shape': self.ob_shape,
+                     'ac_shape': _ac_shape}
+        extra_xp_params = {'alpha': self.hps.alpha,
+                           'beta': self.hps.beta,
+                           'ranked': self.hps.ranked}
         if self.hps.prioritized_replay:
             if self.hps.unreal:  # Unreal prioritized experience replay
                 self.replay_buffer = XP.UnrealRB(**xp_params)
@@ -370,22 +374,15 @@ class SAMAgent(my.AbstractModule):
         logger.info("setting up actor optimizer")
         self.actor_names = []
         self.actor_losses = []
-        self.actor_losses_scaled = []
         phs = [self.obs0]
 
         # Compute the Q loss as the negative of the cumulated Q values, as is
         # customary in actor critic architectures
         self.q_loss = -tf.reduce_mean(self.critic_pred_w_actor)
-        self.q_loss_scaled = self.hps.q_loss_scale * self.q_loss
-        # Add the Q loss to the actor loss
-        self.actor_loss = self.q_loss_scaled
+        self.actor_loss = self.q_loss
         # Populate lists
         self.actor_names.append('q_loss')
         self.actor_losses.append(self.q_loss)
-        self.actor_losses_scaled.append(self.q_loss_scaled)
-
-        # Aggregate non-scaled and scaled losses
-        self.actor_losses = self.actor_losses + self.actor_losses_scaled
 
         # Add assembled actor loss
         self.actor_names.append('actor_loss')
@@ -416,7 +413,6 @@ class SAMAgent(my.AbstractModule):
         logger.info("setting up critic optimizer")
         self.critic_names = []
         self.critic_losses = []
-        self.critic_losses_scaled = []
         phs = [self.obs0, self.acs]
 
         # Compute the 1-step look-ahead TD error loss
@@ -424,14 +420,13 @@ class SAMAgent(my.AbstractModule):
         self.hubered_td_errors_1 = huber_loss(self.td_errors_1)
         if self.hps.prioritized_replay:
             self.hubered_td_errors_1 *= self.iws  # adjust with importance weights
-            phs += [self.iws]
+            phs.append(self.iws)
         self.td_loss_1 = tf.reduce_mean(self.hubered_td_errors_1)
-        self.td_loss_1_scaled = self.hps.td_loss_1_scale * self.td_loss_1
+        self.td_loss_1 *= self.hps.td_loss_1_scale
         # Create the critic loss w/ the scaled 1-step TD loss
-        self.critic_loss = self.td_loss_1_scaled
+        self.critic_loss = self.td_loss_1
         self.critic_names.append('td_loss_1')
         self.critic_losses.append(self.td_loss_1)
-        self.critic_losses_scaled.append(self.td_loss_1_scaled)
         phs.append(self.tc1s)
 
         if self.hps.n_step_returns:
@@ -441,17 +436,16 @@ class SAMAgent(my.AbstractModule):
             if self.hps.prioritized_replay:
                 self.hubered_td_errors_n *= self.iws  # adjust with importance weights
             self.td_loss_n = tf.reduce_mean(self.hubered_td_errors_n)
-            self.td_loss_n_scaled = self.hps.td_loss_n_scale * self.td_loss_n
+            self.td_loss_n *= self.hps.td_loss_n_scale
             # Add the n-step TD loss to the critic loss
-            self.critic_loss += self.td_loss_n_scaled
+            self.critic_loss += self.td_loss_n
             self.critic_names.append('td_loss_n')
             self.critic_losses.append(self.td_loss_n)
-            self.critic_losses_scaled.append(self.td_loss_n_scaled)
             phs.append(self.tcns)
 
         # Fetch critic's regularization losses (@property of the network)
-        self.wd_loss_scaled = tf.reduce_sum(self.critic.regularization_losses)
-        # Note: no need to multiply by a scale as it has already been scaled by Sonnet
+        self.wd_loss = tf.reduce_sum(self.critic.regularization_losses)
+        # Note: no need to multiply by a scale as it has already been scaled
         logger.info("setting up weight decay")
         if self.hps.wd_scale > 0:
             for var in self.critic.trainable_vars:
@@ -460,16 +454,9 @@ class SAMAgent(my.AbstractModule):
                 else:
                     logger.info("  {}".format(var.name))
         # Add critic weight decay regularization to the critic loss
-        self.critic_loss += self.wd_loss_scaled
+        self.critic_loss += self.wd_loss
         self.critic_names.append('wd')
-        self.wd_loss = (self.wd_loss_scaled / self.hps.wd_scale
-                        if self.hps.wd_scale > 0
-                        else tf.zeros_like(self.wd_loss_scaled))
         self.critic_losses.append(self.wd_loss)
-        self.critic_losses_scaled.append(self.wd_loss_scaled)
-
-        # Aggregate non-scaled and scaled losses
-        self.critic_losses = self.critic_losses + self.critic_losses_scaled
 
         # Add assembled critic loss
         self.critic_names.append('critic_loss')
@@ -505,7 +492,8 @@ class SAMAgent(my.AbstractModule):
     def setup_popart(self):
         """Play w/ the magnitude of the return @ the critic output
         by renormalizing the critic output vars (w + b) w/ old running statistics
-        Reference paper: https://arxiv.org/pdf/1602.07714.pdf"""
+        Reference paper: https://arxiv.org/pdf/1602.07714.pdf
+        """
         logger.info("setting up popart")
 
         # Setting old and new stds and means
@@ -614,11 +602,12 @@ class SAMAgent(my.AbstractModule):
             self.popart(np.array([old_ret_mean]), np.array([old_ret_std]))
 
         # Compute losses and gradients
-        b_vs = [b_obs0, b_acs, targ_q_1]
-        if self.hps.n_step_returns:
-            b_vs.append(targ_q_n)
+        b_vs = [b_obs0, b_acs]
         if self.hps.prioritized_replay:
             b_vs.append(b_iws)
+        b_vs.append(targ_q_1)
+        if self.hps.n_step_returns:
+            b_vs.append(targ_q_n)
         actor_losses = self.get_actor_losses(b_obs0)
         actor_grads = self.get_actor_grads(b_obs0)
         critic_losses = self.get_critic_losses(*b_vs)
@@ -640,13 +629,14 @@ class SAMAgent(my.AbstractModule):
             else:  # `td_errors` = [td_errors_1]
                 # Extract the only element of the list
                 td_errors = td_errors[0]
-            flat_td_errors = flatten_lists(td_errors)
-            new_priorities = np.abs(flat_td_errors) + 1e-6  # epsilon from paper
+            new_priorities = np.abs(td_errors) + 1e-6  # epsilon from paper
             self.replay_buffer.update_priorities(b_idxs, new_priorities)
 
         # Aggregate the elements to return
-        losses_and_grads = dict(actor_grads=actor_grads, actor_losses=actor_losses,
-                                critic_grads=critic_grads, critic_losses=critic_losses)
+        losses_and_grads = {'actor_grads': actor_grads,
+                            'actor_losses': actor_losses,
+                            'critic_grads': critic_grads,
+                            'critic_losses': critic_losses}
 
         return losses_and_grads
 

@@ -42,9 +42,9 @@ def imitate_via_sam(args):
     def discriminator_wrapper(name):
         return Discriminator(name=name, env=env, hps=d_hps)
 
-    # Create a sam agent wrapper (note the second input)
+    # Create a SAM agent wrapper (note the second input)
     def sam_agent_wrapper(name, d):
-        return SAMAgent(name=name, comm=comm, env=env, hps=actorcritic_hps, d=d)
+        return SAMAgent(name=name, env=env, hps=actorcritic_hps, d=d, comm=comm)
 
     # Create the expert demonstrations dataset from expert trajectories
     dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos,
@@ -57,7 +57,7 @@ def imitate_via_sam(args):
 
     comm.Barrier()
 
-    # Train SAM imitation policy
+    # Train SAM imitation agent
     sam.learn(comm=comm,
               env=env,
               eval_env=eval_env,
@@ -129,11 +129,11 @@ def evaluate_sam_policy(args):
     def discriminator_wrapper(name):
         return Discriminator(name=name, env=env, hps=d_hps)
 
-    # Create a sam agent wrapper (note the second input)
+    # Create a SAM agent wrapper (note the second input)
     def sam_agent_wrapper(name, d):
         return SAMAgent(name=name, env=env, hps=actorcritic_hps, d=d, comm=None)
 
-    # Evaluate TRPO agent trained via SAM
+    # Evaluate agent trained via SAM
     sam.evaluate(env=env,
                  discriminator_wrapper=discriminator_wrapper,
                  sam_agent_wrapper=sam_agent_wrapper,

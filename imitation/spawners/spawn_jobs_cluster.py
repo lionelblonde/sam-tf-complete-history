@@ -258,7 +258,6 @@ def get_rand_hps(args, meta):
                      'reset_with_demos': np.random.choice([0, 1]),
                      'add_demos_to_mem': 0,
                      'unreal': 0,
-                     'q_loss_scale': 1.,
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
                      'wd_scale': np.random.choice([0.01, 0.001]),
@@ -380,7 +379,6 @@ def get_rand_hps(args, meta):
                      'reset_with_demos': np.random.choice([0, 1]),
                      'add_demos_to_mem': 0,
                      'unreal': 0,
-                     'q_loss_scale': 1.,
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
                      'wd_scale': np.random.choice([0.01, 0.001]),
@@ -396,10 +394,10 @@ def get_spectrum_hps(args, meta, num_seeds):
     """Return a list of maps of hyperparameters selected deterministically
     and spanning the specified range of seeds
     Example of hyperparameter dictionary:
-        {'hid_widths': rand_tuple_from_list([(64, 64)]),  # list of tuples
-         'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
-         'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
-         'tau': np.random.choice([0.001, 0.01]),
+        {'hid_widths': (64, 64),
+         'hid_nonlin': 'relu',
+         'hid_w_init': 'he_normal',
+         'tau': 0.001,
          'with_layernorm': 1,
          'ent_reg_scale': 0.}
     """
@@ -484,7 +482,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'rmsify_obs': 0,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 50,
+                     'training_steps_per_iter': 20,
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
@@ -527,7 +525,6 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'reset_with_demos': 1,
                      'add_demos_to_mem': 0,
                      'unreal': 0,
-                     'q_loss_scale': 1.,
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
                      'wd_scale': 0.001,
@@ -607,7 +604,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'rmsify_obs': 1,
                      'save_frequency': 100,
                      'num_timesteps': int(1e7),
-                     'training_steps_per_iter': 50,
+                     'training_steps_per_iter': 20,
                      'eval_steps_per_iter': 10,
                      'render': 0,
                      'timesteps_per_batch': 4,
@@ -644,7 +641,6 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'reset_with_demos': 1,
                      'add_demos_to_mem': 0,
                      'unreal': 0,
-                     'q_loss_scale': 1.,
                      'td_loss_1_scale': 1.,
                      'td_loss_n_scale': 1.,
                      'wd_scale': 0.001,

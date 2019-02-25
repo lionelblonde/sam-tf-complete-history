@@ -16,8 +16,8 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --rmsify_obs \
     --save_frequency=100 \
     --num_timesteps=10000000 \
-    --training_steps_per_iter=50 \
-    --eval_steps_per_iter=10 \
+    --training_steps_per_iter=20 \
+    --eval_steps_per_iter=20 \
     --no-render \
     --timesteps_per_batch=4 \
     --batch_size=32 \
@@ -46,7 +46,7 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --rew_aug_coeff=0. \
     --param_noise_adaption_frequency=40 \
     --gamma=0.99 \
-    --mem_size=10000 \
+    --mem_size=100000 \
     --no-prioritized_replay \
     --alpha=0.3 \
     --beta=1. \
@@ -54,11 +54,8 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --reset_with_demos \
     --no-add_demos_to_mem \
     --no-unreal \
-    --q_loss_scale=1. \
     --td_loss_1_scale=1. \
     --td_loss_n_scale=1. \
     --wd_scale=1e-3 \
     --n_step_returns \
-    --n=96 \
-    --no-preload \
-    --model_ckpt_dir=$5
+    --n=96

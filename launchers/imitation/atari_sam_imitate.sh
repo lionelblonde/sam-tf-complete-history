@@ -60,7 +60,6 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --reset_with_demos \
     --no-add_demos_to_mem \
     --no-unreal \
-    --q_loss_scale=1. \
     --td_loss_1_scale=1. \
     --td_loss_n_scale=1. \
     --wd_scale=1e-3 \
