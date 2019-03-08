@@ -3,8 +3,8 @@ import os.path as osp
 
 import numpy as np
 
-from imitation.common import tf_util as U
-from imitation.common import logger
+from imitation.helpers.tf_util import initialize, load_model, load_latest_checkpoint
+from imitation.helpers import logger
 
 
 def traj_segment_generator(env, pi, timesteps_per_batch, sample_or_mode):
@@ -117,12 +117,12 @@ def evaluate(env, xpo_agent_wrapper, num_trajs, sample_or_mode, render,
     # Create episode generator
     traj_gen = traj_ep_generator(env=env, pi=pi, sample_or_mode=sample_or_mode, render=render)
     # Initialize and load the previously learned weights into the freshly re-built graph
-    U.initialize()
+    initialize()
     if exact_model_path is not None:
-        U.load_model(exact_model_path)
+        load_model(exact_model_path)
         logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
-        U.load_latest_checkpoint(model_ckpt_dir)
+        load_latest_checkpoint(model_ckpt_dir)
         logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     ep_env_rets = []
@@ -156,12 +156,12 @@ def gather_trajectories(env, xpo_agent_wrapper, demos_dir, num_trajs, sample_or_
     # Create episode generator
     traj_gen = traj_ep_generator(env=env, pi=pi, sample_or_mode=sample_or_mode, render=render)
     # Initialize and load the previously learned weights into the freshly re-built graph
-    U.initialize()
+    initialize()
     if exact_model_path is not None:
-        U.load_model(exact_model_path)
+        load_model(exact_model_path)
         logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
-        U.load_latest_checkpoint(model_ckpt_dir)
+        load_latest_checkpoint(model_ckpt_dir)
         logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     obs0 = []

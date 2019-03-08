@@ -1,26 +1,30 @@
+from collections import OrderedDict
+
 import numpy as np
 import tensorflow as tf
 
 from gym import spaces
 
-from imitation.common import tf_util as U
-from imitation.common import abstract_module as my
-from imitation.common.distributions import BernoulliPd
-from imitation.common.networks import RewardNN
-from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
+from imitation.helpers.tf_util import clip, flatgrad, TheanoFunction
+from imitation.helpers.distributions import BernoulliPd
+from imitation.helpers.networks import RewardNN
+from imitation.helpers.mpi_adam import MpiAdamOptimizer
+from imitation.helpers.mpi_running_mean_std import MpiRunningMeanStd
+from imitation.helpers.math_util import rmsify
+from imitation.helpers.console_util import log_module_info
+from imitation.helpers import logger
 
 
-class Discriminator(my.AbstractModule):
+class Discriminator(object):
 
-    def __init__(self, name, env, hps):
-        super(Discriminator, self).__init__(name=name)
+    def __init__(self, name, env, hps, comm):
+        self.name = name
         # Define everything in a specific scope
         with tf.variable_scope(self.name):
             self.scope = tf.get_variable_scope().name
-            self._init(env=env, hps=hps)
+            self._init(env=env, hps=hps, comm=comm)
 
-    def _init(self, env, hps):
-        # Parameters
+    def _init(self, env, hps, comm):
         self.env = env
         self.ob_shape = self.env.observation_space.shape
         self.ac_space = self.env.action_space
@@ -30,13 +34,14 @@ class Discriminator(my.AbstractModule):
             self.ac_shape = (1,) + self.ac_shape
         self.hps = hps
         assert self.hps.ent_reg_scale >= 0, "'ent_reg_scale' must be non-negative"
+        self.comm = comm
 
         # Assemble clipping functions
         unlimited_range = (-np.infty, np.infty)
         if isinstance(self.ac_space, spaces.Box):
-            self.clip_obs = U.clip((-5., 5.))
+            self.clip_obs = clip((-5., 5.))
         elif isinstance(self.ac_space, spaces.Discrete):
-            self.clip_obs = U.clip(unlimited_range)
+            self.clip_obs = clip(unlimited_range)
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
 
@@ -44,41 +49,45 @@ class Discriminator(my.AbstractModule):
         self.reward_nn = RewardNN(scope=self.scope, name='sr', hps=self.hps)
 
         # Create inputs
-        p_obs = U.get_placeholder(name='p_obs', dtype=tf.float32, shape=(None,) + self.ob_shape)
-        p_acs = U.get_placeholder(name='p_acs', dtype=tf.float32, shape=(None,) + self.ac_shape)
-        e_obs = U.get_placeholder(name='e_obs', dtype=tf.float32, shape=(None,) + self.ob_shape)
-        e_acs = U.get_placeholder(name='e_acs', dtype=tf.float32, shape=(None,) + self.ac_shape)
+        self.p_obs = tf.placeholder(name='p_obs', dtype=tf.float32,
+                                    shape=(None,) + self.ob_shape)
+        self.p_acs = tf.placeholder(name='p_acs', dtype=tf.float32,
+                                    shape=(None,) + self.ac_shape)
+        self.e_obs = tf.placeholder(name='e_obs', dtype=tf.float32,
+                                    shape=(None,) + self.ob_shape)
+        self.e_acs = tf.placeholder(name='e_acs', dtype=tf.float32,
+                                    shape=(None,) + self.ac_shape)
 
         # Rescale observations
         if self.hps.from_raw_pixels:
             # Scale de pixel values
-            p_obz = p_obs / 255.0
-            e_obz = e_obs / 255.0
+            p_obz = self.p_obs / 255.0
+            e_obz = self.e_obs / 255.0
         else:
             if self.hps.rmsify_obs:
                 # Smooth out observations using running statistics and clip
                 with tf.variable_scope("apply_obs_rms"):
                     self.obs_rms = MpiRunningMeanStd(shape=self.ob_shape)
-                p_obz = self.clip_obs(self.rmsify(p_obs, self.obs_rms))
-                e_obz = self.clip_obs(self.rmsify(e_obs, self.obs_rms))
+                p_obz = self.clip_obs(rmsify(self.p_obs, self.obs_rms))
+                e_obz = self.clip_obs(rmsify(self.e_obs, self.obs_rms))
             else:
-                p_obz = p_obs
-                e_obz = e_obs
+                p_obz = self.p_obs
+                e_obz = self.e_obs
 
         # Build graph
-        self.p_scores = self.reward_nn(p_obz, p_acs)
-        self.e_scores = self.reward_nn(e_obz, e_acs)
-        self.scores = tf.concat([self.p_scores, self.e_scores], axis=0)
+        p_scores = self.reward_nn(p_obz, self.p_acs)
+        e_scores = self.reward_nn(e_obz, self.e_acs)
+        scores = tf.concat([p_scores, e_scores], axis=0)
         # `scores` define the conditional distribution D(s,a) := p(label|(state,action))
 
         # Create entropy loss
-        self.bernouilli_pd = BernoulliPd(logits=self.scores)
-        self.ent_mean = tf.reduce_mean(self.bernouilli_pd.entropy())
-        self.ent_loss = -self.hps.ent_reg_scale * self.ent_mean
+        bernouilli_pd = BernoulliPd(logits=scores)
+        ent_mean = tf.reduce_mean(bernouilli_pd.entropy())
+        ent_loss = -self.hps.ent_reg_scale * ent_mean
 
         # Create labels
-        self.fake_labels = tf.zeros_like(self.p_scores)
-        self.real_labels = tf.ones_like(self.e_scores)
+        fake_labels = tf.zeros_like(p_scores)
+        real_labels = tf.ones_like(e_scores)
         if self.hps.label_smoothing:
             # Label smoothing, suggested in 'Improved Techniques for Training GANs',
             # Salimans 2016, https://arxiv.org/abs/1606.03498
@@ -89,27 +98,26 @@ class Discriminator(my.AbstractModule):
                 # Fake labels (negative targets)
                 soft_fake_u_b = 0.0  # standard, hyperparameterization not needed
                 soft_fake_l_b = 0.3  # standard, hyperparameterization not needed
-                self.fake_labels = tf.random_uniform(shape=tf.shape(self.fake_labels),
-                                                     name="fake_labels_smoothing",
-                                                     minval=soft_fake_l_b, maxval=soft_fake_u_b)
+                fake_labels = tf.random_uniform(shape=tf.shape(fake_labels),
+                                                name="fake_labels_smoothing",
+                                                minval=soft_fake_l_b, maxval=soft_fake_u_b)
             # Real labels (positive targets)
             soft_real_u_b = 0.7  # standard, hyperparameterization not needed
             soft_real_l_b = 1.2  # standard, hyperparameterization not needed
-            self.real_labels = tf.random_uniform(shape=tf.shape(self.real_labels),
-                                                 name="real_labels_smoothing",
-                                                 minval=soft_real_l_b, maxval=soft_real_u_b)
-        self.labels = tf.concat([self.fake_labels, self.real_labels], axis=0)
+            real_labels = tf.random_uniform(shape=tf.shape(real_labels),
+                                            name="real_labels_smoothing",
+                                            minval=soft_real_l_b, maxval=soft_real_u_b)
 
         # # Build accuracies
-        self.p_acc = tf.reduce_mean(tf.sigmoid(self.p_scores))
-        self.e_acc = tf.reduce_mean(tf.sigmoid(self.e_scores))
+        p_acc = tf.reduce_mean(tf.sigmoid(p_scores))
+        e_acc = tf.reduce_mean(tf.sigmoid(e_scores))
 
         # Build binary classification (cross-entropy) losses, equal to the negative log likelihood
         # for random variables following a Bernoulli law, divided by the batch size
-        self.p_bernoulli_pd = BernoulliPd(logits=self.p_scores)
-        self.p_loss_mean = tf.reduce_mean(self.p_bernoulli_pd.neglogp(self.fake_labels))
-        self.e_bernoulli_pd = BernoulliPd(logits=self.e_scores)
-        self.e_loss_mean = tf.reduce_mean(self.e_bernoulli_pd.neglogp(self.real_labels))
+        p_bernoulli_pd = BernoulliPd(logits=p_scores)
+        p_loss_mean = tf.reduce_mean(p_bernoulli_pd.neglogp(fake_labels))
+        e_bernoulli_pd = BernoulliPd(logits=e_scores)
+        e_loss_mean = tf.reduce_mean(e_bernoulli_pd.neglogp(real_labels))
 
         # Add a gradient penalty (motivation from WGANs (Gulrajani),
         # but empirically useful in JS-GANs (Lucic et al. 2017))
@@ -121,36 +129,52 @@ class Discriminator(my.AbstractModule):
         shape_obz = (tf.to_int64(batch_size(p_obz)),) + self.ob_shape
         eps_obz = tf.random_uniform(shape=shape_obz, minval=0.0, maxval=1.0)
         obz_interp = eps_obz * p_obz + (1. - eps_obz) * e_obz
-        shape_acs = (tf.to_int64(batch_size(p_acs)),) + self.ac_shape
+        shape_acs = (tf.to_int64(batch_size(self.p_acs)),) + self.ac_shape
         eps_acs = tf.random_uniform(shape=shape_acs, minval=0.0, maxval=1.0)
-        acs_interp = eps_acs * p_acs + (1. - eps_acs) * e_acs
-        self.interp_scores = self.reward_nn(obz_interp, acs_interp)
-        grads = tf.gradients(self.interp_scores, [obz_interp, acs_interp], name="interp_grads")
+        acs_interp = eps_acs * self.p_acs + (1. - eps_acs) * self.e_acs
+        interp_scores = self.reward_nn(obz_interp, acs_interp)
+        grads = tf.gradients(interp_scores, [obz_interp, acs_interp], name="interp_grads")
         assert len(grads) == 2, "length must be exacty 2"
         grad_squared_norms = [tf.reduce_mean(tf.square(grad)) for grad in grads]
         grad_norm = tf.sqrt(tf.reduce_sum(grad_squared_norms))
-        self.grad_pen = tf.reduce_mean(tf.square(grad_norm - 1.0))
+        grad_pen = tf.reduce_mean(tf.square(grad_norm - 1.0))
 
-        # Assemble previous elements into the losses ops
-        self.losses = [self.p_loss_mean,
-                       self.e_loss_mean,
-                       self.ent_mean,
-                       self.ent_loss,
-                       self.p_acc,
-                       self.e_acc,
-                       self.grad_pen]
-        self.loss_names = ["policy_loss", "expert_loss", "ent_mean", "ent_loss",
-                           "policy_acc", "expert_acc", "pd_grad_pen"]
-        self.loss_names = ["d_" + e for e in self.loss_names]
-        self.loss = self.p_loss_mean + self.e_loss_mean + self.ent_loss + 10 * self.grad_pen
+        losses = OrderedDict()
+
+        # Add losses
+        losses.update({'d_policy_loss': p_loss_mean,
+                       'd_expert_loss': e_loss_mean,
+                       'd_ent_mean': ent_mean,
+                       'd_ent_loss': ent_loss,
+                       'd_policy_acc': p_acc,
+                       'd_expert_acc': e_acc,
+                       'd_grad_pen': grad_pen})
+
+        # Assemble discriminator loss
+        loss = p_loss_mean + e_loss_mean + ent_loss + 10 * grad_pen
         # gradient penalty coefficient aligned with the value used in Gulrajani et al.
 
-        # Create Theano-like op that computes the discriminator losses
-        self.compute_losses = U.function([p_obs, p_acs, e_obs, e_acs], self.losses)
-        self.compute_grads = U.function([p_obs, p_acs, e_obs, e_acs],
-                                        U.flatgrad(self.loss,
-                                                   self.trainable_vars,
-                                                   self.hps.clip_norm))
+        # Add assembled disciminator loss
+        losses.update({'d_total_loss': loss})
+
+        # Compute gradients
+        grads = flatgrad(loss, self.trainable_vars, self.hps.clip_norm)
+
+        # Create mpi adam optimizer
+        self.optimizer = MpiAdamOptimizer(comm=self.comm,
+                                          clip_norm=self.hps.clip_norm,
+                                          learning_rate=self.hps.d_lr,
+                                          name='d_adam')
+        optimize_ = self.optimizer.minimize(loss=loss, var_list=self.trainable_vars)
+
+        # Create callable objects
+        phs = [self.p_obs, self.p_acs, self.e_obs, self.e_acs]
+        self.get_losses = TheanoFunction(inputs=phs, outputs=list(losses.values()))
+        self.get_grads = TheanoFunction(inputs=phs, outputs=grads)
+        self.optimize = TheanoFunction(inputs=phs, outputs=optimize_)
+
+        # Make loss names graspable from outside
+        self.names = list(losses.keys())
 
         # Define synthetic reward
         if self.hps.non_satur_grad:
@@ -158,18 +182,19 @@ class Discriminator(my.AbstractModule):
             # 0 for expert-like states, goes to -inf for non-expert-like states
             # compatible with envs with traj cutoffs for good (expert-like) behavior
             # e.g. mountain car, which gets cut off when the car reaches the destination
-            self.reward = tf.log_sigmoid(self.p_scores)
+            reward = tf.log_sigmoid(p_scores)
         else:
             # 0 for non-expert-like states, goes to +inf for expert-like states
             # compatible with envs with traj cutoffs for bad (non-expert-like) behavior
             # e.g. walking simulations that get cut off when the robot falls over
-            self.reward = -tf.log(1. - tf.sigmoid(self.p_scores) + 1e-8)  # HAXX: avoids log(0)
+            reward = -tf.log(1. - tf.sigmoid(p_scores) + 1e-8)  # HAXX: avoids log(0)
 
         # Create Theano-like op that compute the synthetic reward
-        self.compute_reward = U.function([p_obs, p_acs], self.reward)
+        self.compute_reward = TheanoFunction(inputs=[self.p_obs, self.p_acs],
+                                             outputs=reward)
 
         # Summarize module information in logs
-        self.log_module_info(self.reward_nn)
+        log_module_info(logger, self.name, self.reward_nn)
 
     def get_reward(self, ob, ac):
         """Compute synthetic reward from a single observation
@@ -193,10 +218,14 @@ class Discriminator(my.AbstractModule):
         For safety reason, the scalar is still extracted from the singleton numpy array with
         `np.asscalar`.
         """
-        ob_expanded = ob[None]
-        ac_expanded = ac[None]
-        synthetic_reward = self.compute_reward(ob_expanded, ac_expanded)
+        synthetic_reward = self.compute_reward({self.p_obs: ob[None],
+                                                self.p_acs: ac[None]})
+
         return np.asscalar(synthetic_reward.flatten())
+
+    def sync_from_root(self):
+        """Synchronize the optimizer across all mpi workers"""
+        self.optimizer.sync_from_root(self.trainable_vars)
 
     @property
     def vars(self):

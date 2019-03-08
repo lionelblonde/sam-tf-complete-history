@@ -1,13 +1,11 @@
 from os import makedirs
 import os.path as osp
 
-import gym.spaces  # noqa
-
-from imitation.common import tf_util as U
-from imitation.common.argparsers import gail_argparser, disambiguate
-from imitation.common.experiment_initializer import ExperimentInitializer
-from imitation.common.env_makers import make_env
-from imitation.common.misc_util import set_global_seeds
+from imitation.helpers.tf_util import single_threaded_session
+from imitation.helpers.argparsers import gail_argparser, disambiguate
+from imitation.helpers.experiment_initializer import ExperimentInitializer
+from imitation.helpers.env_makers import make_env
+from imitation.helpers.misc_util import set_global_seeds
 from imitation.expert_algorithms.xpo_agent import XPOAgent
 from imitation.imitation_algorithms.discriminator import Discriminator
 from imitation.imitation_algorithms import gail
@@ -17,7 +15,7 @@ from imitation.imitation_algorithms.demo_dataset import DemoDataset
 def imitate_via_gail(args):
     """Train a GAIL imitation policy"""
     # Create a single-threaded session
-    U.single_threaded_session().__enter__()
+    single_threaded_session().__enter__()
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -33,8 +31,7 @@ def imitate_via_gail(args):
     worker_seed = args.seed + 1000000 * rank
     set_global_seeds(worker_seed)
     # Create environment
-    name = "{}.worker_{}".format(args.task, rank)
-    env = make_env(args.env_id, worker_seed, name, args.horizon)
+    env = make_env(args.env_id, worker_seed, args.horizon)
 
     # Refine hps to avoid ambiguities
     pol_hps, d_hps = disambiguate(kvs=args, tokens=['pol', 'd'])
@@ -43,7 +40,7 @@ def imitate_via_gail(args):
         return XPOAgent(name=name, env=env, hps=pol_hps)
 
     def discriminator_wrapper(name):
-        return Discriminator(name=name, env=env, hps=d_hps)
+        return Discriminator(name=name, env=env, hps=d_hps, comm=comm)
 
     # Create the expert demonstrations dataset from expert trajectories
     dataset = DemoDataset(expert_arxiv=args.expert_path, size=args.num_demos)
@@ -73,8 +70,7 @@ def imitate_via_gail(args):
                cg_damping=args.cg_damping,
                vf_iters=args.vf_iters,
                vf_lr=args.vf_lr,
-               d_lr=args.d_lr,
-               max_timesteps=int(args.num_timesteps))
+               max_iters=int(args.num_iters))
 
     # Close environment
     env.close()
@@ -83,7 +79,7 @@ def imitate_via_gail(args):
 def evaluate_gail_policy(args):
     """Evaluate a trained GAIL imitation policy"""
     # Create a single-threaded session
-    U.single_threaded_session().__enter__()
+    single_threaded_session().__enter__()
 
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args)
@@ -92,7 +88,7 @@ def evaluate_gail_policy(args):
     # Seedify
     set_global_seeds(args.seed)
     # Create environment
-    env = make_env(args.env_id, args.seed, args.task, args.horizon)
+    env = make_env(args.env_id, args.seed, args.horizon)
 
     if args.record:
         # Create experiment name
@@ -100,7 +96,7 @@ def evaluate_gail_policy(args):
         save_dir = osp.join(args.video_dir, experiment_name)
         makedirs(save_dir, exist_ok=True)
         # Wrap the environment again to record videos
-        from imitation.common.video_recorder_wrapper import VideoRecorder
+        from imitation.helpers.video_recorder_wrapper import VideoRecorder
         video_length = args.horizon if args.horizon is not None else env.env._max_episode_steps
         env = VideoRecorder(env=env,
                             save_dir=save_dir,

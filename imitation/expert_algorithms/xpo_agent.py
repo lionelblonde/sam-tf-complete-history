@@ -3,23 +3,24 @@ import tensorflow as tf
 
 from gym import spaces
 
-import imitation.common.tf_util as U
-from imitation.common import abstract_module as my
-from imitation.common.networks import PolicyNN, ValueNN
-from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
+from imitation.helpers.tf_util import clip, get_placeholder, switch, TheanoFunction
+from imitation.helpers.console_util import log_module_info
+from imitation.helpers.math_util import rmsify
+from imitation.helpers.networks import PolicyNN, ValueNN
+from imitation.helpers.mpi_running_mean_std import MpiRunningMeanStd
+from imitation.helpers import logger
 
 
-class XPOAgent(my.AbstractModule):
+class XPOAgent(object):
 
     def __init__(self, name, env, hps):
-        super(XPOAgent, self).__init__(name=name)
+        self.name = name
         # Define everything in a specific scope
         with tf.variable_scope(self.name):
             self.scope = tf.get_variable_scope().name
             self._init(env=env, hps=hps)
 
     def _init(self, env, hps):
-        # Parameters
         self.env = env
         self.ob_shape = self.env.observation_space.shape
         self.ac_space = self.env.action_space
@@ -27,9 +28,9 @@ class XPOAgent(my.AbstractModule):
 
         # Assemble clipping functions
         if isinstance(self.ac_space, spaces.Box):
-            self.clip_obs = U.clip((-5., 5.))
+            self.clip_obs = clip((-5., 5.))
         elif isinstance(self.ac_space, spaces.Discrete):
-            self.clip_obs = U.clip((-np.infty, np.infty))
+            self.clip_obs = clip((-np.infty, np.infty))
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
 
@@ -40,33 +41,33 @@ class XPOAgent(my.AbstractModule):
         self.pd_type = self.policy_nn.pd_type  # used outside for ac ph init
 
         # Create inputs
-        ob = U.get_placeholder(name='ob', dtype=tf.float32, shape=(None,) + self.ob_shape)
-        sample_or_mode = U.get_placeholder(name="sample_or_mode", dtype=tf.bool, shape=())
+        self.ob = get_placeholder(name='ob', dtype=tf.float32, shape=(None,) + self.ob_shape)
+        self.sample_or_mode = get_placeholder(name="sample_or_mode", dtype=tf.bool, shape=())
 
         # Rescale observations
         if self.hps.from_raw_pixels:
             # Scale pixel values
-            obz = tf.cast(ob, tf.float32) / 255.0
+            obz = tf.cast(self.ob, tf.float32) / 255.0
         else:
             if self.hps.rmsify_obs:
                 # Smooth out observations using running statistics and clip
                 with tf.variable_scope("apply_obs_rms"):
                     self.obs_rms = MpiRunningMeanStd(shape=self.ob_shape)
-                obz = self.clip_obs(self.rmsify(ob, self.obs_rms))
+                obz = self.clip_obs(rmsify(self.ob, self.obs_rms))
             else:
-                obz = ob
+                obz = self.ob
 
         # Build graph
         self.pd_pred = self.policy_nn(obz)
-        self.ac_pred = U.switch(sample_or_mode, self.pd_pred.sample(), self.pd_pred.mode())
+        self.ac_pred = switch(self.sample_or_mode, self.pd_pred.sample(), self.pd_pred.mode())
         self.v_pred = self.value_nn(obz)
 
-        # Create Theano-like op that predicts action and state value for the current state
-        self.act_compute_v = U.function([sample_or_mode, ob],
-                                        [self.ac_pred, self.v_pred])
+        # Create a callable object that predicts action and state value for the current state
+        self.act_compute_v = TheanoFunction(inputs=[self.sample_or_mode, self.ob],
+                                            outputs=[self.ac_pred, self.v_pred])
 
         # Summarize module information in logs
-        self.log_module_info(self.policy_nn, self.value_nn)
+        log_module_info(logger, self.name, self.policy_nn, self.value_nn)
 
     def predict(self, sample_or_mode, ob):
         """Act and compute state value from a single observation
@@ -95,8 +96,9 @@ class XPOAgent(my.AbstractModule):
         For safety reason, the scalar is still extracted from the singleton numpy array with
         `np.asscalar`.
         """
-        ob_expanded = ob[None]
-        ac_pred, v_pred = self.act_compute_v(sample_or_mode, ob_expanded)
+        ac_pred, v_pred = self.act_compute_v({self.sample_or_mode: sample_or_mode,
+                                              self.ob: ob[None]})
+
         return ac_pred.flatten(), np.asscalar(v_pred.flatten())
 
     @property

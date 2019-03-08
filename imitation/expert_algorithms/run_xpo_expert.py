@@ -1,21 +1,19 @@
 from os import makedirs
 import os.path as osp
 
-import gym.spaces  # noqa
-
-from imitation.common import tf_util as U
-from imitation.common.argparsers import xpo_expert_argparser
-from imitation.common.experiment_initializer import ExperimentInitializer
-from imitation.common.env_makers import make_env
-from imitation.common.misc_util import set_global_seeds
+from imitation.helpers.tf_util import single_threaded_session
+from imitation.helpers.argparsers import xpo_expert_argparser
+from imitation.helpers.experiment_initializer import ExperimentInitializer
+from imitation.helpers.env_makers import make_env
+from imitation.helpers.misc_util import set_global_seeds
 from imitation.expert_algorithms.xpo_agent import XPOAgent
-from imitation.expert_algorithms import ppo, trpo, xpo_util
+from imitation.expert_algorithms import xpo_util
 
 
 def train_xpo_expert(args):
     """Train a XPO expert policy"""
     # Create a single-threaded session
-    U.single_threaded_session().__enter__()
+    single_threaded_session().__enter__()
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -31,14 +29,14 @@ def train_xpo_expert(args):
     worker_seed = args.seed + 1000000 * rank
     set_global_seeds(worker_seed)
     # Create environment
-    name = "{}.worker_{}".format(args.task, rank)
-    env = make_env(args.env_id, worker_seed, name, args.horizon)
+    env = make_env(args.env_id, worker_seed, args.horizon)
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)
 
     # Train XPO expert policy
     if args.algo == 'ppo':
+        from imitation.expert_algorithms import ppo
         ppo.learn(comm=comm,
                   env=env,
                   xpo_agent_wrapper=xpo_agent_wrapper,
@@ -56,8 +54,9 @@ def train_xpo_expert(args):
                   clipping_eps=args.clipping_eps,
                   gae_lambda=args.gae_lambda,
                   schedule=args.schedule,
-                  max_timesteps=int(args.num_timesteps))
+                  max_iters=int(args.num_iters))
     elif args.algo == 'trpo':
+        from imitation.expert_algorithms import trpo
         trpo.learn(comm=comm,
                    env=env,
                    xpo_agent_wrapper=xpo_agent_wrapper,
@@ -76,7 +75,7 @@ def train_xpo_expert(args):
                    cg_damping=args.cg_damping,
                    vf_iters=args.vf_iters,
                    vf_lr=args.vf_lr,
-                   max_timesteps=int(args.num_timesteps))
+                   max_iters=int(args.num_iters))
     else:
         raise RuntimeError("unknown algorithm")
 
@@ -89,7 +88,7 @@ def evaluate_xpo_expert(args):
     assert args.render + args.record <= 1, "either record video or render"
 
     # Create a single-threaded session
-    U.single_threaded_session().__enter__()
+    single_threaded_session().__enter__()
 
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args)
@@ -98,7 +97,7 @@ def evaluate_xpo_expert(args):
     # Seedify
     set_global_seeds(args.seed)
     # Create environment
-    env = make_env(args.env_id, args.seed, args.task, args.horizon)
+    env = make_env(args.env_id, args.seed, args.horizon)
 
     if args.record:
         # Create experiment name
@@ -106,7 +105,7 @@ def evaluate_xpo_expert(args):
         save_dir = osp.join(args.video_dir, experiment_name)
         makedirs(save_dir, exist_ok=True)
         # Wrap the environment again to record videos
-        from imitation.common.video_recorder_wrapper import VideoRecorder
+        from imitation.helpers.video_recorder_wrapper import VideoRecorder
         video_length = args.horizon if args.horizon is not None else env.env._max_episode_steps
         env = VideoRecorder(env=env,
                             save_dir=save_dir,
@@ -133,7 +132,7 @@ def evaluate_xpo_expert(args):
 def gather_xpo_expert(args):
     """Gather trajectories from a trained XPO expert policy"""
     # Create a single-threaded session
-    U.single_threaded_session().__enter__()
+    single_threaded_session().__enter__()
 
     # Initialize and configure experiment
     experiment = ExperimentInitializer(args)
@@ -142,7 +141,7 @@ def gather_xpo_expert(args):
     # Seedify
     set_global_seeds(args.seed)
     # Create environment
-    env = make_env(args.env_id, args.seed, args.task, args.horizon)
+    env = make_env(args.env_id, args.seed, args.horizon)
 
     def xpo_agent_wrapper(name):
         return XPOAgent(name=name, env=env, hps=args)

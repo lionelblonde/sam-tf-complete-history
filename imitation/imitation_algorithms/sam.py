@@ -1,20 +1,20 @@
 import time
 import copy
 import os.path as osp
-from collections import deque
+from collections import namedtuple, deque, OrderedDict
 
 from gym import spaces
 
 import numpy as np
+from numpy.linalg import norm
+import tensorflow as tf
 
-from imitation.common import tf_util as U
-from imitation.common import logger
-from imitation.common.misc_util import zipsame
-from imitation.common.math_util import meanv
-from imitation.common.console_util import timed_cm_wrapper, pretty_iter, pretty_elapsed, columnize
-from imitation.common.mpi_adam import MpiAdamOptimizer
-from imitation.common.summary_util import CustomSummary
-from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce, mpi_moments
+from imitation.helpers.tf_util import initialize
+from imitation.helpers.tf_util import save_state, load_model, load_latest_checkpoint
+from imitation.helpers import logger
+from imitation.helpers.misc_util import zipsame
+from imitation.helpers.console_util import timed_cm_wrapper, pretty_iter, pretty_elapsed, columnize
+from imitation.helpers.mpi_moments import mpi_mean_like, mpi_mean_reduce, mpi_moments
 
 
 def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, expert_dataset):
@@ -39,12 +39,6 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, exper
     if expert_dataset is not None:
         # Override with an observation from expert demos
         ob = reset_with_demos_()
-    cur_ep_len = 0
-    cur_ep_syn_ret = 0
-    cur_ep_env_ret = 0
-    ep_lens = []
-    ep_syn_rets = []
-    ep_env_rets = []
     obs = np.array([ob for _ in range(timesteps_per_batch)])
     acs = np.array([ac for _ in range(timesteps_per_batch)])
     qs = np.zeros(timesteps_per_batch, 'float32')
@@ -60,36 +54,23 @@ def traj_segment_generator(env, mu, d, timesteps_per_batch, rew_aug_coeff, exper
                    "qs": qs,
                    "syn_rews": syn_rews,
                    "env_rews": env_rews,
-                   "dones": dones,
-                   "ep_lens": ep_lens,
-                   "ep_syn_rets": ep_syn_rets,
-                   "ep_env_rets": ep_env_rets}
+                   "dones": dones}
             _, q_pred = mu.predict(ob, apply_noise=True, compute_q=True)
-            ep_lens = []
-            ep_syn_rets = []
-            ep_env_rets = []
         i = t % timesteps_per_batch
         obs[i] = ob
         acs[i] = ac
         qs[i] = q_pred
         dones[i] = done
+
         syn_rew = d.get_reward(ob, ac)
         new_ob, env_rew, done, _ = env.step(ac)
         syn_rews[i] = syn_rew
         env_rews[i] = env_rew
-        cur_ep_len += 1
-        cur_ep_syn_ret += syn_rew
-        cur_ep_env_ret += env_rew
+
         stored_rew = syn_rew + (rew_aug_coeff * env_rew)
         mu.store_transition(ob, ac, stored_rew, new_ob, done)
         ob = copy.copy(new_ob)
         if done:
-            ep_lens.append(cur_ep_len)
-            ep_syn_rets.append(cur_ep_syn_ret)
-            ep_env_rets.append(cur_ep_env_ret)
-            cur_ep_len = 0
-            cur_ep_syn_ret = 0
-            cur_ep_env_ret = 0
             mu.reset_noise()
             ob = env.reset()
             if expert_dataset is not None:
@@ -172,12 +153,12 @@ def evaluate(env,
     # Create episode generator
     traj_gen = traj_ep_generator(env, mu, d, render)
     # Initialize and load the previously learned weights into the freshly re-built graph
-    U.initialize()
+    initialize()
     if exact_model_path is not None:
-        U.load_model(exact_model_path)
+        load_model(exact_model_path)
         logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
     else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
-        U.load_latest_checkpoint(model_ckpt_dir)
+        load_latest_checkpoint(model_ckpt_dir)
         logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
     # Initialize the history data structures
     ep_lens = []
@@ -214,7 +195,6 @@ def learn(comm,
           reset_with_demos,
           add_demos_to_mem,
           save_frequency,
-          d_lr,
           rew_aug_coeff,
           param_noise_adaption_frequency,
           timesteps_per_batch,
@@ -224,10 +204,9 @@ def learn(comm,
           d_steps,
           training_steps_per_iter,
           eval_steps_per_iter,
+          eval_frequency,
           render,
-          max_timesteps=0,
-          max_episodes=0,
-          max_iters=0,
+          max_iters,
           preload=False,
           exact_model_path=None,
           model_ckpt_dir=None):
@@ -243,59 +222,35 @@ def learn(comm,
     # Create sam agent, taking `d` as input
     mu = sam_agent_wrapper('mu', d)
 
-    # Create mpi adam optimizer for the discriminator
-    d_optimizer = MpiAdamOptimizer(comm, clip_norm=d.hps.clip_norm,
-                                   learning_rate=d_lr, name='d_adam')
-    _optimize_d = d_optimizer.minimize(d.loss, var_list=d.trainable_vars)
-
-    # Retrieve already-existing placeholders
-    p_obs = U.get_placeholder_cached(name='p_obs')
-    p_acs = U.get_placeholder_cached(name='p_acs')
-    e_obs = U.get_placeholder_cached(name='e_obs')
-    e_acs = U.get_placeholder_cached(name='e_acs')
-
-    # Create Theano-like ops
-    optimize_d = U.function([p_obs, p_acs, e_obs, e_acs], _optimize_d)
-
     # Initialise variables
-    U.initialize()
+    initialize()
 
     if preload:
         # Load tensor values from previous run
         if exact_model_path is not None:
-            U.load_model(exact_model_path)
+            load_model(exact_model_path)
             logger.info("model loaded from exact path:\n  {}".format(exact_model_path))
         else:  # `exact_model_path` is None -> `model_ckpt_dir` is not None
-            U.load_latest_checkpoint(model_ckpt_dir)
+            load_latest_checkpoint(model_ckpt_dir)
             logger.info("model loaded from ckpt dir:\n  {}".format(model_ckpt_dir))
 
-    # Sync params of all processes with the params of the root process...
-    # ... for the policy
+    # Initialize target networks
+    mu.initialize_target_nets()
+
+    # Sync params of all processes with the params of the root process
     mu.sync_from_root()
-    # ... and for the discrimininator
-    d_optimizer.sync_from_root(d.trainable_vars)
+    d.sync_from_root()
 
     if add_demos_to_mem:
         # Add demonstrations to memory
         mu.replay_buffer.add_demo_transitions_to_mem(expert_dataset)
 
     # Create context manager that records the time taken by encapsulated ops
-    timed = timed_cm_wrapper(comm, logger, color_message='magenta', color_elapsed_time='cyan')
+    timed = timed_cm_wrapper(comm, logger)
 
     if rank == 0:
         # Create summary writer
-        writer = U.file_writer(summary_dir)
-        # Create the summary
-        names = []
-        ep_stats_names = ['ep_length', 'ep_syn_ret', 'ep_env_ret']
-        names.extend(ep_stats_names)
-        if mu.param_noise is not None:
-            pn_names = ['pn_cur_std', 'pn_dist']
-            names.extend(pn_names)
-        names.extend(mu.actor_names)
-        names.extend(mu.critic_names)
-        names.extend(d.loss_names)
-        summary = CustomSummary(scalar_keys=names, family="sam")
+        summary_writer = tf.summary.FileWriterCache.get(summary_dir)
 
     if isinstance(env.action_space, spaces.Box):
         # Logging the action scale + performing shape sanity check
@@ -313,68 +268,46 @@ def learn(comm,
         # Create episode generator for evaluating the agent
         eval_ep_gen = traj_ep_generator(eval_env, mu, d, render)
 
-    eps_so_far = 0
-    timesteps_so_far = 0
     iters_so_far = 0
     tstart = time.time()
 
     # Define rolling buffers for experiental data collection
     maxlen = 100
-    ac_buffer = deque(maxlen=maxlen)
-    q_buffer = deque(maxlen=maxlen)
-    len_buffer = deque(maxlen=maxlen)
-    syn_ret_buffer = deque(maxlen=maxlen)
-    env_ret_buffer = deque(maxlen=maxlen)
-    actor_grads_buffer = deque(maxlen=maxlen)
-    actor_losses_buffer = deque(maxlen=maxlen)
-    critic_grads_buffer = deque(maxlen=maxlen)
-    critic_losses_buffer = deque(maxlen=maxlen)
-    d_grads_buffer = deque(maxlen=maxlen)
-    d_losses_buffer = deque(maxlen=maxlen)
+    keys = ['ac', 'q',
+            'actor_grads', 'actor_losses',
+            'critic_grads', 'critic_losses',
+            'd_grads', 'd_losses']
     if mu.param_noise is not None:
-        pn_dist_buffer = deque(maxlen=maxlen)
-        pn_cur_std_buffer = deque(maxlen=maxlen)
+        keys.extend(['pn_dist', 'pn_cur_std'])
     if eval_env is not None:
         assert rank == 0, "non-zero rank mpi worker forbidden here"
-        eval_ac_buffer = deque(maxlen=maxlen)
-        eval_q_buffer = deque(maxlen=maxlen)
-        eval_len_buffer = deque(maxlen=maxlen)
-        eval_syn_ret_buffer = deque(maxlen=maxlen)
-        eval_env_ret_buffer = deque(maxlen=maxlen)
+        keys.extend(['eval_ac', 'eval_q', 'eval_len', 'eval_syn_ret', 'eval_env_ret'])
+    Deques = namedtuple('Deques', keys)
+    deques = Deques(**{k: deque(maxlen=maxlen) for k in keys})
 
-    # Only one of those three parameters can be set by the user (all three are zero by default)
-    assert sum([max_iters > 0, max_timesteps > 0, max_episodes > 0]) == 1
+    while iters_so_far <= max_iters:
 
-    while True:
-
-        if max_timesteps and timesteps_so_far >= max_timesteps:
-            break
-        elif max_episodes and eps_so_far >= max_episodes:
-            break
-        elif max_iters and iters_so_far >= max_iters:
-            break
+        pretty_iter(logger, iters_so_far)
+        pretty_elapsed(logger, tstart)
 
         if hasattr(mu, 'eps_greedy_sched'):
             # Adapt the param noise threshold
-            mu.adapt_eps_greedy(timesteps_so_far)
+            mu.adapt_eps_greedy(iters_so_far * timesteps_per_batch)
 
         # Verify that the processes are still in sync
         if iters_so_far > 0 and iters_so_far % 10 == 0:
             logger.info("checking param sync across processes")
-            mu.actor_optimizer.check_synced(mu.actor.trainable_vars)
-            mu.critic_optimizer.check_synced(mu.critic.trainable_vars)
-            d_optimizer.check_synced(d.trainable_vars)
+            mu.actor_ops['optimizer'].check_synced(mu.actor.trainable_vars)
+            mu.critic_ops['optimizer'].check_synced(mu.critic.trainable_vars)
+            d.optimizer.check_synced(d.trainable_vars)
             logger.info("  sync check passed")
 
         # Save the model
         if rank == 0 and iters_so_far % save_frequency == 0 and ckpt_dir is not None:
             model_path = osp.join(ckpt_dir, experiment_name)
-            U.save_state(model_path, iters_so_far=iters_so_far)
+            save_state(model_path, iters_so_far=iters_so_far)
             logger.info("saving model")
             logger.info("  @: {}".format(model_path))
-
-        pretty_iter(logger, iters_so_far)
-        pretty_elapsed(logger, tstart)
 
         # Make non-zero-rank workers wait for rank zero
         comm.Barrier()
@@ -382,25 +315,21 @@ def learn(comm,
         # Sample mini-batch in env w/ perturbed actor and store transitions
         with timed("sampling mini-batch"):
             seg = seg_gen.__next__()
-        # Extend deques with collected experiental data
-        acs, qs = seg['acs'], seg['qs']
-        lens, syn_rets, env_rets = seg['ep_lens'], seg['ep_syn_rets'], seg['ep_env_rets']
-        ac_buffer.extend(acs)
-        q_buffer.extend(qs)
-        len_buffer.extend(lens)
-        syn_ret_buffer.extend(syn_rets)
-        env_ret_buffer.extend(env_rets)
+
+        # Extend deques with collected experiential data
+        deques.ac.extend(seg['acs'])
+        deques.q.extend(seg['qs'])
 
         for training_step in range(training_steps_per_iter):
 
             logger.info("training [{}/{}]".format(training_step + 1, training_steps_per_iter))
 
             for d_step in range(d_steps):
-                # Update disciminator
-                logger.info("  updating d [{}/{}]".format(d_step + 1, d_steps))
+                # Update discriminator
 
                 if window is not None:
-                    # --[Train d on recent pairs sampled from the replay buffer]--
+                    # Train d on recent pairs sampled from the replay buffer
+
                     # Collect recent pairs uniformly from the experience replay buffer
                     assert window > batch_size, "must have window > batch_size"
                     xp_batch = mu.replay_buffer.sample_recent(batch_size=batch_size,
@@ -421,16 +350,24 @@ def learn(comm,
                     if hasattr(d, "obs_rms"):
                         d.obs_rms.update(np.concatenate((ob_pol, ob_exp), axis=0), comm)
 
-                    # Compute losses and gradients
-                    grads = d.compute_grads(ob_pol, ac_pol, ob_exp, ac_exp)
-                    new_losses = d.compute_losses(ob_pol, ac_pol, ob_exp, ac_exp)
-                    # Update discriminator
-                    optimize_d(ob_pol, ac_pol, ob_exp, ac_exp)
-                    # Store the losses and gradients in their respective deques
-                    d_grads_buffer.append(grads)
-                    d_losses_buffer.append(new_losses)
+                    feeds = {d.p_obs: ob_pol,
+                             d.p_acs: ac_pol,
+                             d.e_obs: ob_exp,
+                             d.e_acs: ac_exp}
 
-                # --[Train d on pairs sampled from the replay buffer]--
+                    # Compute losses and gradients
+                    grads = d.get_grads(feeds)
+                    losses = d.get_losses(feeds)
+
+                    # Update discriminator
+                    d.optimize(feeds)
+
+                    # Store the losses and gradients in their respective deques
+                    deques.d_grads.append(grads)
+                    deques.d_losses.append(losses)
+
+                # Train d on pairs sampled from the replay buffer
+
                 # Collect pairs uniformly from the experience replay buffer
                 sample_ = mu.replay_buffer.sample
                 if hasattr(mu.replay_buffer, 'sample_uniform'):
@@ -452,28 +389,34 @@ def learn(comm,
                 if hasattr(d, "obs_rms"):
                     d.obs_rms.update(np.concatenate((ob_pol_, ob_exp_), axis=0), comm)
 
+                feeds_ = {d.p_obs: ob_pol_,
+                          d.p_acs: ac_pol_,
+                          d.e_obs: ob_exp_,
+                          d.e_acs: ac_exp_}
+
                 # Compute losses and gradients
-                grads = d.compute_grads(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
-                new_losses = d.compute_losses(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
+                d_grads = d.get_grads(feeds_)
+                d_losses = d.get_losses(feeds_)
+
                 # Update discriminator
-                optimize_d(ob_pol_, ac_pol_, ob_exp_, ac_exp_)
+                d.optimize(feeds_)
+
                 # Store the losses and gradients in their respective deques
-                d_grads_buffer.append(grads)
-                d_losses_buffer.append(new_losses)
+                deques.d_grads.append(d_grads)
+                deques.d_losses.append(d_losses)
 
             if mu.param_noise is not None:
                 if training_step % param_noise_adaption_frequency == 0:
-                    logger.info("  adapting param noise")
                     # Adapt parameter noise
                     mu.adapt_param_noise(comm)
                     # Store the action-space distance between perturbed and non-perturbed actors
-                    pn_dist_buffer.append(mu.pn_dist)
+                    deques.pn_dist.append(mu.pn_dist)
                     # Store the new std resulting from the adaption
-                    pn_cur_std_buffer.append(mu.pn_cur_std)
+                    deques.pn_cur_std.append(mu.pn_cur_std)
 
             for g_step in range(g_steps):
                 # Update agent w/ samples from replay buffer
-                logger.info("  updating g [{}/{}]".format(g_step + 1, g_steps))
+
                 # Train the actor-critic architecture
                 losses_and_grads = mu.train()
                 # Unpack the returned training gradients and losses
@@ -482,168 +425,131 @@ def learn(comm,
                 critic_grads = losses_and_grads['critic_grads']
                 critic_losses = losses_and_grads['critic_losses']
                 # Store the losses and gradients in their respective deques
-                actor_grads_buffer.append(actor_grads)
-                actor_losses_buffer.append(actor_losses)
-                critic_grads_buffer.append(critic_grads)
-                critic_losses_buffer.append(critic_losses)
+                deques.actor_grads.append(actor_grads)
+                deques.actor_losses.append(actor_losses)
+                deques.critic_grads.append(critic_grads)
+                deques.critic_losses.append(critic_losses)
                 # Update the target networks
                 mu.update_target_net()
 
         if eval_env is not None:  # `eval_env` not None iff rank = 0
             assert rank == 0, "non-zero rank mpi worker forbidden here"
-            for eval_step in range(eval_steps_per_iter):
-                logger.info("evaluating [{}/{}]".format(eval_step + 1, eval_steps_per_iter))
-                # Sample an episode w/ non-perturbed actor w/o storing anything
-                eval_ep = eval_ep_gen.__next__()
-                # Unpack collected episodic data
-                eval_acs, eval_qs = eval_ep['acs'], eval_ep['qs']
-                eval_len = eval_ep['ep_len']
-                eval_syn_ret = eval_ep['ep_syn_ret']
-                eval_env_ret = eval_ep['ep_env_ret']
-                # Aggregate data collected during the evaluation to the buffers
-                eval_ac_buffer.extend(eval_acs)
-                eval_q_buffer.extend(eval_qs)
-                eval_len_buffer.append(eval_len)
-                eval_syn_ret_buffer.append(eval_syn_ret)
-                eval_env_ret_buffer.append(eval_env_ret)
+
+            if iters_so_far % eval_frequency == 0:
+                for eval_step in range(eval_steps_per_iter):
+                    logger.info("evaluating [{}/{}]".format(eval_step + 1, eval_steps_per_iter))
+
+                    # Sample an episode w/ non-perturbed actor w/o storing anything
+                    eval_ep = eval_ep_gen.__next__()
+
+                    # Aggregate data collected during the evaluation to the buffers
+                    deques.eval_ac.extend(eval_ep['acs'])
+                    deques.eval_q.extend(eval_ep['qs'])
+                    deques.eval_len.append(eval_ep['ep_len'])
+                    deques.eval_syn_ret.append(eval_ep['ep_syn_ret'])
+                    deques.eval_env_ret.append(eval_ep['ep_env_ret'])
 
         # Make non-zero-rank workers wait for rank zero
         comm.Barrier()
 
         # Log statistics
 
-        logger.info("logging misc training stats (log)")
-        # Initialize lists
-        _stats_n = []  # names
-        _stats_l = []  # local stats
-        _stats_g = []  # global stats
+        stats = OrderedDict()
+        mpi_stats = OrderedDict()
+
         # Add min, max and mean of the components of the average action
-        ac_np_mean = np.mean(ac_buffer, axis=0)  # vector
-        ac_mpi_mean, _, _ = mpi_moments(list(ac_buffer), comm)  # vector
-        _stats_n.append('min_ac_comp')
-        _stats_l.append(np.amin(ac_np_mean))
-        _stats_g.append(np.amin(ac_mpi_mean))
-        _stats_n.append('max_ac_comp')
-        _stats_l.append(np.amax(ac_np_mean))
-        _stats_g.append(np.amax(ac_mpi_mean))
-        _stats_n.append('mean_ac_comp')
-        _stats_l.append(np.mean(ac_np_mean))
-        _stats_g.append(np.mean(ac_mpi_mean))
+        ac_np_mean = np.mean(deques.ac, axis=0)  # vector
+        ac_mpi_mean, _, _ = mpi_moments(list(deques.ac), comm)  # vector
+        stats.update({'min_ac_comp': np.amin(ac_np_mean)})
+        stats.update({'max_ac_comp': np.amax(ac_np_mean)})
+        stats.update({'mean_ac_comp': np.mean(ac_np_mean)})
+        mpi_stats.update({'min_ac_comp': np.amin(ac_mpi_mean)})
+        mpi_stats.update({'max_ac_comp': np.amax(ac_mpi_mean)})
+        mpi_stats.update({'mean_ac_comp': np.mean(ac_mpi_mean)})
+
         # Add Q values mean and std
-        q_mpi_mean, q_mpi_std, _ = mpi_moments(list(q_buffer), comm)  # scalars
-        _stats_n.append('q_value')
-        _stats_l.append(np.mean(q_buffer))
-        _stats_g.append(q_mpi_mean)
-        _stats_n.append('q_deviation')
-        _stats_l.append(np.std(q_buffer))
-        _stats_g.append(q_mpi_std)
-        # Add episodic stats (use custom mean for verbosity)
-        _stats_n.append('ep_len')
-        _stats_l.append(meanv(len_buffer))
-        _stats_g.append(mpi_mean_reduce(list(len_buffer), comm))
-        _stats_n.append('ep_syn_ret')
-        _stats_l.append(meanv(syn_ret_buffer))
-        _stats_g.append(mpi_mean_reduce(list(syn_ret_buffer), comm))
-        _stats_n.append('ep_env_ret')
-        _stats_l.append(meanv(env_ret_buffer))
-        _stats_g.append(mpi_mean_reduce(list(env_ret_buffer), comm))
-        # Add misc time-related stats
-        eps_this_iter = len(lens)
-        timesteps_this_iter = sum(lens)
-        eps_so_far += eps_this_iter
-        timesteps_so_far += timesteps_this_iter
-        _stats_n.append('ep_this_iter')
-        _stats_l.append(np.mean(eps_this_iter))
-        _stats_g.append(mpi_mean_like(eps_this_iter, comm))
-        _stats_n.append('ts_this_iter')
-        _stats_l.append(np.mean(timesteps_this_iter))
-        _stats_g.append(mpi_mean_like(timesteps_this_iter, comm))
-        _stats_n.append('eps_so_far')
-        _stats_l.append(np.mean(eps_so_far))
-        _stats_g.append(mpi_mean_like(eps_so_far, comm))
-        _stats_n.append('ts_so_far')
-        _stats_l.append(np.mean(timesteps_so_far))
-        _stats_g.append(mpi_mean_like(timesteps_so_far, comm))
+        q_mpi_mean, q_mpi_std, _ = mpi_moments(list(deques.q), comm)  # scalars
+        stats.update({'q_value': np.mean(deques.q)})
+        stats.update({'q_deviation': np.std(deques.q)})
+        mpi_stats.update({'q_value': q_mpi_mean})
+        mpi_stats.update({'q_deviation': q_mpi_std})
+
         # Add gradient norms
-        _stats_n.append('actor_grad_norm')
-        _stats_l.append(np.linalg.norm(np.mean(actor_grads_buffer, axis=0)))
-        _stats_g.append(np.linalg.norm(mpi_mean_reduce(list(actor_grads_buffer), comm)))
-        _stats_n.append('critic_grad_norm')
-        _stats_l.append(np.linalg.norm(np.mean(critic_grads_buffer, axis=0)))
-        _stats_g.append(np.linalg.norm(mpi_mean_reduce(list(critic_grads_buffer), comm)))
-        _stats_n.append('d_grad_norm')
-        _stats_l.append(np.linalg.norm(np.mean(d_grads_buffer, axis=0)))
-        _stats_g.append(np.linalg.norm(mpi_mean_reduce(list(d_grads_buffer), comm)))
-        if mu.param_noise is not None:
-            # Add parameter noise current std
-            pn_cur_std_mpi_mean = mpi_mean_reduce(list(pn_cur_std_buffer), comm)
-            _stats_n.append('pn_cur_std')
-            _stats_l.append(np.mean(pn_cur_std_buffer))
-            _stats_g.append(pn_cur_std_mpi_mean)
-            # Add parameter noise distance
-            pn_dist_mpi_mean = mpi_mean_reduce(list(pn_dist_buffer), comm)
-            _stats_n.append('pn_dist')
-            _stats_l.append(np.mean(pn_dist_buffer))
-            _stats_g.append(pn_dist_mpi_mean)
+        stats.update({'actor_gradnorm': norm(np.mean(deques.actor_grads, axis=0))})
+        stats.update({'critic_gradnorm': norm(np.mean(deques.critic_grads, axis=0))})
+        stats.update({'d_gradnorm': norm(np.mean(deques.d_grads, axis=0))})
+
+        mpi_mean_actor_grad = mpi_mean_reduce(list(deques.actor_grads), comm)
+        mpi_mean_critic_grad = mpi_mean_reduce(list(deques.critic_grads), comm)
+        mpi_mean_d_grad = mpi_mean_reduce(list(deques.d_grads), comm)
+        mpi_stats.update({'actor_gradnorm': norm(mpi_mean_actor_grad)})
+        mpi_stats.update({'critic_gradnorm': norm(mpi_mean_critic_grad)})
+        mpi_stats.update({'d_gradnorm': norm(mpi_mean_d_grad)})
+
         # Add replay buffer num entries
-        _stats_n.append('mem_num_entries')
-        _stats_l.append(np.mean(mu.replay_buffer.num_entries))
-        _stats_g.append(mpi_mean_like(mu.replay_buffer.num_entries, comm))
-        # Zip names, local and global stats
-        zipped_nlg = zipsame(_stats_n, _stats_l, _stats_g)
-        # Log the dictionaries into one table
-        logger.info(columnize(names=['name', 'local', 'global'],
-                              tuples=zipped_nlg,
-                              widths=[24, 16, 16]))
+        stats.update({'mem_num_entries': np.mean(mu.replay_buffer.num_entries)})
+        mpi_stats.update({'mem_num_entries': mpi_mean_like(mu.replay_buffer.num_entries, comm)})
+
+        # Log dictionary content
+        col_names = ['name', 'value']
+        col_widths = [24, 16]  # no hp
+        logger.info("logging misc training stats (local) (log)")
+        logger.info(columnize(col_names, stats.items(), col_widths))
+        logger.info("logging misc training stats (global) (log)")
+        logger.info(columnize(col_names, mpi_stats.items(), col_widths))
 
         if eval_env is not None:
-            # Use the logger object to log the eval stats (will appear in `progress{}.csv`)
             assert rank == 0, "non-zero rank mpi worker forbidden here"
-            logger.info("logging misc eval stats (log + csv)")
-            # Add min, max and mean of the components of the average action
-            ac_np_mean = np.mean(eval_ac_buffer, axis=0)  # vector
-            logger.record_tabular('min_ac_comp', np.amin(ac_np_mean))
-            logger.record_tabular('max_ac_comp', np.amax(ac_np_mean))
-            logger.record_tabular('mean_ac_comp', np.mean(ac_np_mean))
-            # Add Q values mean and std
-            logger.record_tabular('q_value', np.mean(eval_q_buffer))
-            logger.record_tabular('q_deviation', np.std(eval_q_buffer))
-            # Add episodic stats
-            logger.record_tabular('ep_len', np.mean(eval_len_buffer))
-            logger.record_tabular('ep_syn_ret', np.mean(eval_syn_ret_buffer))
-            logger.record_tabular('ep_env_ret', np.mean(eval_env_ret_buffer))
-            logger.dump_tabular()
+
+            if iters_so_far % eval_frequency == 0:
+                # Use the logger object to log the eval stats (will appear in `progress{}.csv`)
+                logger.info("logging misc eval stats (log + csv)")
+                # Add min, max and mean of the components of the average action
+                ac_np_mean = np.mean(deques.eval_ac, axis=0)  # vector
+                logger.record_tabular('min_ac_comp', np.amin(ac_np_mean))
+                logger.record_tabular('max_ac_comp', np.amax(ac_np_mean))
+                logger.record_tabular('mean_ac_comp', np.mean(ac_np_mean))
+                # Add Q values mean and std
+                logger.record_tabular('q_value', np.mean(deques.eval_q))
+                logger.record_tabular('q_deviation', np.std(deques.eval_q))
+                # Add episodic stats
+                logger.record_tabular('ep_len', np.mean(deques.eval_len))
+                logger.record_tabular('ep_syn_ret', np.mean(deques.eval_syn_ret))
+                logger.record_tabular('ep_env_ret', np.mean(deques.eval_env_ret))
+                logger.dump_tabular()
 
         # Mark the end of the iter in the logs
         logger.info('')
 
         iters_so_far += 1
 
-        # Prepare losses to be dumped in summaries
-        # Note: this block must be visible by all workers
-        all_summaries = []
-        ep_stats_summary = []
-        if eval_env is not None:
-            # Add misc episodic stats from eval time
-            assert rank == 0, "non-zero rank mpi worker forbidden here"
-            ep_stats_summary = [np.mean(eval_len_buffer),
-                                np.mean(eval_syn_ret_buffer),
-                                np.mean(eval_env_ret_buffer)]
-        all_summaries.extend(ep_stats_summary)
-        # Add stats from training time
-        if mu.param_noise is not None:
-            # Add param noise stats to summary
-            pn_summary = [pn_cur_std_mpi_mean, pn_dist_mpi_mean]
-            all_summaries.extend(pn_summary)
-        # Add losses
-        actor_mean_losses = mpi_mean_reduce(list(actor_losses_buffer), comm)
-        critic_mean_losses = mpi_mean_reduce(list(critic_losses_buffer), comm)
-        d_mean_losses = mpi_mean_reduce(list(d_losses_buffer), comm)
-        mean_losses_summary = (list(actor_mean_losses) +
-                               list(critic_mean_losses) +
-                               list(d_mean_losses))
-        all_summaries.extend(mean_losses_summary)
-
         if rank == 0:
-            assert len(names) == len(all_summaries), "mismatch in list lengths"
-            summary.add_all_summaries(writer, all_summaries, iters_so_far)
+
+            # Add summaries
+            summary = tf.summary.Summary()
+            tab = 'sam'
+
+            if iters_so_far % eval_frequency == 0:
+                summary.value.add(tag="{}/{}".format(tab, 'mean_ep_len'),
+                                  simple_value=np.mean(deques.eval_len))
+                summary.value.add(tag="{}/{}".format(tab, 'mean_ep_syn_ret'),
+                                  simple_value=np.mean(deques.eval_syn_ret))
+                summary.value.add(tag="{}/{}".format(tab, 'mean_ep_env_ret'),
+                                  simple_value=np.mean(deques.eval_env_ret))
+            if mu.param_noise is not None:
+                # Add param noise stats to summary
+                summary.value.add(tag="{}/{}".format(tab, 'mean_pn_cur_std'),
+                                  simple_value=np.mean(deques.pn_cur_std))
+                summary.value.add(tag="{}/{}".format(tab, 'mean_pn_dist'),
+                                  simple_value=np.mean(deques.pn_dist))
+            # Losses
+            for name, loss in zipsame(mu.actor_ops['names'],
+                                      np.mean(deques.actor_losses, axis=0)):
+                summary.value.add(tag="{}/{}".format(tab, name), simple_value=loss)
+            for name, loss in zipsame(mu.critic_ops['names'],
+                                      np.mean(deques.critic_losses, axis=0)):
+                summary.value.add(tag="{}/{}".format(tab, name), simple_value=loss)
+            for name, loss in zipsame(d.names, np.mean(deques.d_losses, axis=0)):
+                summary.value.add(tag="{}/{}".format(tab, name), simple_value=loss)
+
+            summary_writer.add_summary(summary, iters_so_far)

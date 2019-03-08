@@ -1,6 +1,6 @@
 import numpy as np
 
-from imitation.common import logger
+from imitation.helpers import logger
 
 
 class PairDataset(object):

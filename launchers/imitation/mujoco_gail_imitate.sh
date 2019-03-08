@@ -15,7 +15,7 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_g
     --expert_path=$3 \
     --rmsify_obs \
     --save_frequency=100 \
-    --num_timesteps=1000000000 \
+    --num_iters=1000000 \
     --timesteps_per_batch=1024 \
     --batch_size=128 \
     --sample_or_mode \

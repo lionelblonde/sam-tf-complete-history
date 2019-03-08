@@ -1,21 +1,23 @@
+from collections import OrderedDict
+
 import numpy as np
 import tensorflow as tf
 
 from gym import spaces
 
-from imitation.common import tf_util as U
-from imitation.common import abstract_module as my
-from imitation.common.networks import ActorNN, CriticNN
-from imitation.common.math_util import huber_loss
-from imitation.common import logger
-from imitation.common.mpi_moments import mpi_mean_like
-from imitation.common.mpi_running_mean_std import MpiRunningMeanStd
-from imitation.common.misc_util import onehotify, zipsame
-from imitation.common.mpi_adam import MpiAdamOptimizer
+from imitation.helpers.tf_util import TheanoFunction, flatgrad, clip
+from imitation.helpers.networks import ActorNN, CriticNN
+from imitation.helpers.math_util import huber_loss, rmsify, dermsify
+from imitation.helpers import logger
+from imitation.helpers.mpi_moments import mpi_mean_like
+from imitation.helpers.mpi_running_mean_std import MpiRunningMeanStd
+from imitation.helpers.misc_util import onehotify, zipsame
+from imitation.helpers.mpi_adam import MpiAdamOptimizer
+from imitation.helpers.console_util import log_module_info
 from imitation.imitation_algorithms import memory as XP
 
 
-def get_target_updates(vars_, targ_vars, tau):
+def get_target_updates(vars_, targ_vars, polyak):
     """Return assignment ops for target network updates.
     Hard updates are used for initialization only, while soft updates are
     used throughout the training process, at every iteration.
@@ -29,7 +31,7 @@ def get_target_updates(vars_, targ_vars, tau):
     for var_, targ_var in zipsame(vars_, targ_vars):
         logger.info('  {} <- {}'.format(targ_var.name, var_.name))
         hard_updates.append(tf.assign(targ_var, var_))
-        soft_updates.append(tf.assign(targ_var, (1. - tau) * targ_var + tau * var_))
+        soft_updates.append(tf.assign(targ_var, (1. - polyak) * targ_var + polyak * var_))
     assert len(hard_updates) == len(vars_)
     assert len(soft_updates) == len(vars_)
     return tf.group(*hard_updates), tf.group(*soft_updates)  # ops that group ops
@@ -56,10 +58,10 @@ def get_p_actor_updates(actor, perturbed_actor, pn_std):
     return tf.group(*updates)
 
 
-class SAMAgent(my.AbstractModule):
+class SAMAgent(object):
 
     def __init__(self, name, *args, **kwargs):
-        super(SAMAgent, self).__init__(name=name)
+        self.name = name
         # Define everything in a specific scope
         with tf.variable_scope(self.name):
             self.scope = tf.get_variable_scope().name
@@ -82,16 +84,22 @@ class SAMAgent(my.AbstractModule):
         self.hps = hps
         assert self.hps.n > 1 or not self.hps.n_step_returns
 
+        # Retrieve the synthetic reward network
+        self.d = d.reward_nn
+
         # Assemble clipping functions
         unlimited_range = (-np.infty, np.infty)
         if isinstance(self.ac_space, spaces.Box):
-            self.clip_obs = U.clip((-5., 5.))
-            self.clip_acs = U.clip(unlimited_range)
-            self.clip_rets = U.clip(unlimited_range)
+            self.clip_obs = clip((-5., 5.))
+            assert all(self.ac_space.low == -self.ac_space.high), "non-admissible ac space bounds"
+            ac_valid_bound = self.ac_space.high[0]
+            assert all(ac_comp == ac_valid_bound for ac_comp in self.ac_space.high)
+            self.clip_acs = clip((-ac_valid_bound, ac_valid_bound))
+            self.clip_rets = clip(unlimited_range)
         elif isinstance(self.ac_space, spaces.Discrete):
-            self.clip_obs = U.clip(unlimited_range)
+            self.clip_obs = clip(unlimited_range)
             self.clip_acs = lambda x: tf.cast(tf.identity(x), dtype=tf.float32)  # identity
-            self.clip_rets = U.clip(unlimited_range)
+            self.clip_rets = clip(unlimited_range)
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
 
@@ -133,10 +141,7 @@ class SAMAgent(my.AbstractModule):
             self.apnp_actor = ActorNN(scope=self.scope, name='apnp_actor',
                                       ac_space=self.ac_space, hps=self.hps)
 
-        # Retrieve the synthetic reward network
-        self.reward = d  # can be used to implement another priority update heuristic
-
-        # Rescale observations
+        # Process observations
         if self.hps.from_raw_pixels:
             # Scale pixel values
             self.obz0 = tf.cast(self.obs0, tf.float32) / 255.0
@@ -147,26 +152,26 @@ class SAMAgent(my.AbstractModule):
                 with tf.variable_scope("apply_obs_rms"):
                     self.obs_rms = MpiRunningMeanStd(shape=self.ob_shape)
                 # Smooth out observations using running statistics and clip
-                self.obz0 = self.clip_obs(self.rmsify(self.obs0, self.obs_rms))
-                self.obz1 = self.clip_obs(self.rmsify(self.obs1, self.obs_rms))
+                self.obz0 = self.clip_obs(rmsify(self.obs0, self.obs_rms))
+                self.obz1 = self.clip_obs(rmsify(self.obs1, self.obs_rms))
             else:
                 self.obz0 = self.obs0
                 self.obz1 = self.obs1
 
-        # Rescale returns
+        # Process returns
         if self.hps.rmsify_rets:
             with tf.variable_scope("apply_ret_rms"):
                 self.ret_rms = MpiRunningMeanStd()  # scalar, no shape to provide
             # Normalize and clip the 1-step (and optionaly n-step) critic target(s) value(s)
-            self.tc1z = self.clip_rets(self.rmsify(self.tc1s, self.ret_rms))
+            self.tc1z = self.clip_rets(rmsify(self.tc1s, self.ret_rms))
             if self.hps.n_step_returns:
-                self.tcnz = self.clip_rets(self.rmsify(self.tcns, self.ret_rms))
+                self.tcnz = self.clip_rets(rmsify(self.tcns, self.ret_rms))
         else:
             self.tc1z = self.clip_rets(self.tc1s)
             if self.hps.n_step_returns:
                 self.tcnz = self.clip_rets(self.tcns)
 
-        # Build graphs
+        # Build graph
 
         # Actor prediction from state input
         self.actor_pred = self.clip_acs(self.actor(self.obz0))
@@ -174,44 +179,58 @@ class SAMAgent(my.AbstractModule):
         # Critic prediction from state and action inputs
         self.critic_pred = self.clip_rets(self.critic(self.obz0, self.acs))
         if self.hps.rmsify_rets:
-            self.critic_pred = self.dermsify(self.critic_pred, self.ret_rms)
+            self.critic_pred = dermsify(self.critic_pred, self.ret_rms)
+
         # Critic prediction from observation input and action outputed by the actor
         # critic(s, actor(s)), i.e. only dependent on state input
         self.critic_pred_w_actor = self.clip_rets(self.critic(self.obz0, self.actor_pred))
         if self.hps.rmsify_rets:
-            self.critic_pred_w_actor = self.dermsify(self.critic_pred_w_actor, self.ret_rms)
+            self.critic_pred_w_actor = dermsify(self.critic_pred_w_actor, self.ret_rms)
+
+        # Discriminator prediction from observation input and action outputed by the actor
+        # critic(s, actor(s)), i.e. only dependent on state input
+        self.d_pred_w_actor = self.clip_rets(self.d(self.obz0, self.actor_pred))
+        if self.hps.rmsify_rets:
+            self.d_pred_w_actor = dermsify(self.d_pred_w_actor, self.ret_rms)
 
         # Create target Q value defined as reward + gamma * Q' (1-step TD lookahead)
         # Q' (Q_{t+1}) is defined w/ s' (s_{t+1}) and a' (a_{t+1}),
         # where a' is the output of the target actor evaluated on s' (s_{t+1})
         self.q_prime = self.targ_critic(self.obz1, self.targ_actor(self.obz1))
         if self.hps.rmsify_rets:
-            self.q_prime = self.dermsify(self.q_prime, self.ret_rms)
+            self.q_prime = dermsify(self.q_prime, self.ret_rms)
         self.mask = tf.ones_like(self.dones1) - self.dones1
         assert self.mask.get_shape().as_list() == self.q_prime.get_shape().as_list()
         self.masked_q_prime = self.mask * self.q_prime  # mask out Q's when terminal state reached
         self.targ_q = self.rews + (tf.pow(self.hps.gamma, self.td_len) * self.masked_q_prime)
 
-        # Create Theano-like ops
+        # Create callable objects
         if isinstance(self.ac_space, spaces.Box):
-            self.act = U.function([self.obs0], [self.actor_pred])
-            self.act_q = U.function([self.obs0], [self.actor_pred, self.critic_pred_w_actor])
+            self.act = TheanoFunction(inputs=[self.obs0],
+                                      outputs=[self.actor_pred])
+            self.act_q = TheanoFunction(inputs=[self.obs0],
+                                        outputs=[self.actor_pred, self.critic_pred_w_actor])
         elif isinstance(self.ac_space, spaces.Discrete):
             # Note: actor network outputs softmax -> take argmax to pick one action
             self._actor_pred = tf.argmax(self.actor_pred, axis=-1)
-            self.act = U.function([self.obs0], [self._actor_pred])
-            self.act_q = U.function([self.obs0], [self._actor_pred, self.critic_pred_w_actor])
+            self.act = TheanoFunction(inputs=[self.obs0],
+                                      outputs=[self._actor_pred])
+            self.act_q = TheanoFunction(inputs=[self.obs0],
+                                        outputs=[self._actor_pred, self.critic_pred_w_actor])
 
         if self.hps.rmsify_rets:
-            self.old_ret_stats = U.function([self.rews], [self.ret_rms.mean, self.ret_rms.std])
-        self.get_targ_q = U.function([self.obs1, self.rews, self.dones1, self.td_len], self.targ_q)
+            self.old_ret_stats = TheanoFunction(inputs=[self.rews],
+                                                outputs=[self.ret_rms.mean, self.ret_rms.std])
+
+        self.get_targ_q = TheanoFunction(inputs=[self.obs1, self.rews, self.dones1, self.td_len],
+                                         outputs=self.targ_q)
 
         # Set up training components
         if self.param_noise is not None:
             self.setup_param_noise()
         self.setup_replay_buffer()
-        self.setup_actor_optimizer()
-        self.setup_critic_optimizer()
+        self.actor_ops = self.setup_actor()
+        self.critic_ops = self.setup_critic()
         if self.hps.rmsify_rets and self.hps.enable_popart:
             self.setup_popart()
         self.setup_target_network_updates()
@@ -274,7 +293,7 @@ class SAMAgent(my.AbstractModule):
         sched_timesteps = int(explo_frac * self.hps.num_timesteps)
         # Define final value of random action probability
         explo_final_eps = 0.02
-        from imitation.common.linear_schedule import LinearSchedule
+        from imitation.helpers.linear_schedule import LinearSchedule
         self.eps_greedy_sched = LinearSchedule(sched_timesteps=sched_timesteps,
                                                init_p=init_eps,
                                                final_p=explo_final_eps)
@@ -293,17 +312,18 @@ class SAMAgent(my.AbstractModule):
         logger.info("setting up replay buffer")
         # In the discrete actions case, we store the acs indices
         if isinstance(self.ac_space, spaces.Box):
-            _ac_shape = self.ac_shape
+            ac_shape_ = self.ac_shape
         elif isinstance(self.ac_space, spaces.Discrete):
-            _ac_shape = ()
+            ac_shape_ = ()
         else:
             raise RuntimeError("ac space is neither Box nor Discrete")
         xp_params = {'limit': self.hps.mem_size,
                      'ob_shape': self.ob_shape,
-                     'ac_shape': _ac_shape}
+                     'ac_shape': ac_shape_}
         extra_xp_params = {'alpha': self.hps.alpha,
                            'beta': self.hps.beta,
                            'ranked': self.hps.ranked}
+
         if self.hps.prioritized_replay:
             if self.hps.unreal:  # Unreal prioritized experience replay
                 self.replay_buffer = XP.UnrealRB(**xp_params)
@@ -316,16 +336,18 @@ class SAMAgent(my.AbstractModule):
 
     def setup_target_network_updates(self):
         logger.info("setting up target network updates")
-        actor_args = [self.actor.vars, self.targ_actor.vars, self.hps.tau]
-        critic_args = [self.critic.vars, self.targ_critic.vars, self.hps.tau]
+        actor_args = [self.actor.vars, self.targ_actor.vars, self.hps.polyak]
+        critic_args = [self.critic.vars, self.targ_critic.vars, self.hps.polyak]
         actor_hard_updates, actor_soft_updates = get_target_updates(*actor_args)
         critic_hard_updates, critic_soft_updates = get_target_updates(*critic_args)
         self.targ_hard_updates = [actor_hard_updates, critic_hard_updates]
         self.targ_soft_updates = [actor_soft_updates, critic_soft_updates]
 
-        # Create Theano-like ops
-        self.perform_targ_hard_updates = U.function([], [self.targ_hard_updates])
-        self.perform_targ_soft_updates = U.function([], [self.targ_soft_updates])
+        # Create callable objects
+        self.perform_targ_hard_updates = TheanoFunction(inputs=[],
+                                                        outputs=[self.targ_hard_updates])
+        self.perform_targ_soft_updates = TheanoFunction(inputs=[],
+                                                        outputs=[self.targ_soft_updates])
 
     def setup_param_noise(self):
         """Setup two separate perturbed actors, one which be used only for interacting
@@ -348,103 +370,135 @@ class SAMAgent(my.AbstractModule):
         self.a_p_actor_updates = get_p_actor_updates(self.actor, self.apnp_actor, self.pn_std)
         self.a_dist = tf.sqrt(tf.reduce_mean(tf.square(self.actor_pred - self.apnp_actor_pred)))
 
-        # Create Theano-like ops
+        # Create callable objects
         # Act (and compute Q) according to the parameter-noise-perturbed actor
-        self.p_act = U.function([self.obs0], [self.pnp_actor_pred])
-        self.p_act_q = U.function([self.obs0], [self.pnp_actor_pred, self.critic_pred_w_actor])
+        self.p_act = TheanoFunction(inputs=[self.obs0],
+                                    outputs=[self.pnp_actor_pred])
+        self.p_act_q = TheanoFunction(inputs=[self.obs0],
+                                      outputs=[self.pnp_actor_pred,
+                                               self.critic_pred_w_actor])
 
         if isinstance(self.ac_space, spaces.Box):
-            self.p_act = U.function([self.obs0], [self.pnp_actor_pred])
-            self.p_act_q = U.function([self.obs0], [self.pnp_actor_pred, self.critic_pred_w_actor])
+            self.p_act = TheanoFunction(inputs=[self.obs0],
+                                        outputs=[self.pnp_actor_pred])
+            self.p_act_q = TheanoFunction(inputs=[self.obs0],
+                                          outputs=[self.pnp_actor_pred,
+                                                   self.critic_pred_w_actor])
         elif isinstance(self.ac_space, spaces.Discrete):
             # Note: actor network outputs softmax -> take argmax to pick one action
-            self._pnp_actor_pred = tf.argmax(self.pnp_actor_pred, axis=-1)
-            self.p_act = U.function([self.obs0], [self._pnp_actor_pred])
-            self.p_act_q = U.function([self.obs0], [self._pnp_actor_pred,
-                                                    self.critic_pred_w_actor])
+            self.pnp_actor_pred_ = tf.argmax(self.pnp_actor_pred, axis=-1)
+            self.p_act = TheanoFunction(inputs=[self.obs0],
+                                        outputs=[self.pnp_actor_pred_])
+            self.p_act_q = TheanoFunction(inputs=[self.obs0],
+                                          outputs=[self.pnp_actor_pred_,
+                                                   self.critic_pred_w_actor])
 
-        # Compute distance between actor and adaptive-parameter-noise-perturbed actor predictions
-        self.get_a_p_dist = U.function([self.obs0, self.pn_std], self.a_dist)
+        # Create distance between actor and adaptive-parameter-noise-perturbed actor predictions
+        self.get_a_p_dist = TheanoFunction(inputs=[self.obs0, self.pn_std],
+                                           outputs=self.a_dist)
         # Retrieve parameter-noise-perturbation updates
-        self.apply_p_actor_updates = U.function([self.pn_std], [self.p_actor_updates])
+        self.apply_p_actor_updates = TheanoFunction(inputs=[self.pn_std],
+                                                    outputs=[self.p_actor_updates])
         # Retrieve adaptive-parameter-noise-perturbation updates
-        self.apply_a_p_actor_updates = U.function([self.pn_std], [self.a_p_actor_updates])
+        self.apply_a_p_actor_updates = TheanoFunction(inputs=[self.pn_std],
+                                                      outputs=[self.a_p_actor_updates])
 
-    def setup_actor_optimizer(self):
+    def setup_actor(self):
         logger.info("setting up actor optimizer")
-        self.actor_names = []
-        self.actor_losses = []
-        phs = [self.obs0]
 
-        # Compute the Q loss as the negative of the cumulated Q values, as is
-        # customary in actor critic architectures
-        self.q_loss = -tf.reduce_mean(self.critic_pred_w_actor)
-        self.actor_loss = self.q_loss
-        # Populate lists
-        self.actor_names.append('q_loss')
-        self.actor_losses.append(self.q_loss)
+        losses = OrderedDict()
+
+        # Create the Q loss as the negative of the cumulated Q values
+        q_loss = -tf.reduce_mean(self.critic_pred_w_actor)
+        q_loss *= self.hps.q_actor_loss_scale
+
+        # Create the actor loss w/ the scaled Q loss
+        loss = q_loss
+
+        losses.update({'actor_q_loss': q_loss})
+
+        # Create the D loss as the negative of the cumulated D values
+        d_loss = -tf.reduce_mean(self.d_pred_w_actor)
+        d_loss *= self.hps.d_actor_loss_scale
+
+        # Add the D loss to the actor loss
+        loss += d_loss
+
+        losses.update({'actor_d_loss': d_loss})
 
         # Add assembled actor loss
-        self.actor_names.append('actor_loss')
-        self.actor_losses.append(self.actor_loss)
+        losses.update({'actor_total_loss': loss})
 
-        # Compute gradients
-        self.actor_grads = U.flatgrad(self.actor_loss,
-                                      self.actor.trainable_vars,
-                                      self.hps.clip_norm)
+        # Create gradients
+        grads = flatgrad(loss, self.actor.trainable_vars, self.hps.clip_norm)
 
         # Create mpi adam optimizer
-        self.actor_optimizer = MpiAdamOptimizer(comm=self.comm,
-                                                clip_norm=self.hps.clip_norm,
-                                                learning_rate=self.hps.actor_lr,
-                                                name='actor_adam')
-        _optimize_actor = self.actor_optimizer.minimize(self.actor_loss,
-                                                        var_list=self.actor.trainable_vars)
+        optimizer = MpiAdamOptimizer(comm=self.comm,
+                                     clip_norm=self.hps.clip_norm,
+                                     learning_rate=self.hps.actor_lr,
+                                     name='actor_adam')
+        optimize_ = optimizer.minimize(loss=loss, var_list=self.actor.trainable_vars)
 
-        # Create Theano-like ops
-        self.get_actor_losses = U.function(phs, self.actor_losses)
-        self.get_actor_grads = U.function(phs, self.actor_grads)
-        self.optimize_actor = U.function(phs, _optimize_actor)
+        # Create callable objects
+        get_losses = TheanoFunction(inputs=[self.obs0], outputs=list(losses.values()))
+        get_grads = TheanoFunction(inputs=[self.obs0], outputs=grads)
+        optimize = TheanoFunction(inputs=[self.obs0], outputs=optimize_)
 
         # Log statistics
-        self.log_module_info(self.actor)
+        log_module_info(logger, self.name, self.actor)
 
-    def setup_critic_optimizer(self):
+        # Return the actor ops
+        return {'names': list(losses.keys()),
+                'losses': get_losses,
+                'grads': get_grads,
+                'optimizer': optimizer,
+                'optimize': optimize}
+
+    def setup_critic(self):
         logger.info("setting up critic optimizer")
-        self.critic_names = []
-        self.critic_losses = []
+
+        losses = OrderedDict()
+
         phs = [self.obs0, self.acs]
 
-        # Compute the 1-step look-ahead TD error loss
-        self.td_errors_1 = self.critic_pred - self.tc1z
-        self.hubered_td_errors_1 = huber_loss(self.td_errors_1)
         if self.hps.prioritized_replay:
-            self.hubered_td_errors_1 *= self.iws  # adjust with importance weights
             phs.append(self.iws)
-        self.td_loss_1 = tf.reduce_mean(self.hubered_td_errors_1)
-        self.td_loss_1 *= self.hps.td_loss_1_scale
+
+        # Create the 1-step look-ahead TD error loss
+        td_errors_1 = self.critic_pred - self.tc1z
+        hubered_td_errors_1 = huber_loss(td_errors_1)
+        if self.hps.prioritized_replay:
+            # Adjust with importance weights
+            hubered_td_errors_1 *= self.iws
+        td_loss_1 = tf.reduce_mean(hubered_td_errors_1)
+        td_loss_1 *= self.hps.td_loss_1_scale
+
         # Create the critic loss w/ the scaled 1-step TD loss
-        self.critic_loss = self.td_loss_1
-        self.critic_names.append('td_loss_1')
-        self.critic_losses.append(self.td_loss_1)
+        loss = td_loss_1
+
+        losses.update({'critic_td_loss_1': td_loss_1})
+
         phs.append(self.tc1s)
 
         if self.hps.n_step_returns:
-            # Compute the n-step look-ahead TD error loss
-            self.td_errors_n = self.critic_pred - self.tcnz
-            self.hubered_td_errors_n = huber_loss(self.td_errors_n)
+            # Create the n-step look-ahead TD error loss
+            td_errors_n = self.critic_pred - self.tcnz
+            hubered_td_errors_n = huber_loss(td_errors_n)
             if self.hps.prioritized_replay:
-                self.hubered_td_errors_n *= self.iws  # adjust with importance weights
-            self.td_loss_n = tf.reduce_mean(self.hubered_td_errors_n)
-            self.td_loss_n *= self.hps.td_loss_n_scale
-            # Add the n-step TD loss to the critic loss
-            self.critic_loss += self.td_loss_n
-            self.critic_names.append('td_loss_n')
-            self.critic_losses.append(self.td_loss_n)
+                # Adjust with importance weights
+                hubered_td_errors_n *= self.iws
+            td_loss_n = tf.reduce_mean(hubered_td_errors_n)
+            td_loss_n *= self.hps.td_loss_n_scale
+
+            # Add the scaled n-step TD loss to the critic loss
+            loss += td_loss_n
+
+            losses.update({'critic_td_loss_n': td_loss_n})
+
             phs.append(self.tcns)
 
         # Fetch critic's regularization losses (@property of the network)
-        self.wd_loss = tf.reduce_sum(self.critic.regularization_losses)
+        wd_loss = tf.reduce_sum(self.critic.regularization_losses)
         # Note: no need to multiply by a scale as it has already been scaled
         logger.info("setting up weight decay")
         if self.hps.wd_scale > 0:
@@ -453,41 +507,49 @@ class SAMAgent(my.AbstractModule):
                     logger.info("  {} <- wd w/ scale {}".format(var.name, self.hps.wd_scale))
                 else:
                     logger.info("  {}".format(var.name))
+
         # Add critic weight decay regularization to the critic loss
-        self.critic_loss += self.wd_loss
-        self.critic_names.append('wd')
-        self.critic_losses.append(self.wd_loss)
+        loss += wd_loss
+
+        losses.update({'critic_wd': wd_loss})
 
         # Add assembled critic loss
-        self.critic_names.append('critic_loss')
-        self.critic_losses.append(self.critic_loss)
+        losses.update({'critic_total_loss': loss})
 
-        # Compute gradients
-        self.critic_grads = U.flatgrad(self.critic_loss,
-                                       self.critic.trainable_vars,
-                                       self.hps.clip_norm)
+        # Create gradients
+        grads = flatgrad(loss, self.critic.trainable_vars, self.hps.clip_norm)
 
         # Create mpi adam optimizer
-        self.critic_optimizer = MpiAdamOptimizer(comm=self.comm,
-                                                 clip_norm=self.hps.clip_norm,
-                                                 learning_rate=self.hps.critic_lr,
-                                                 name='critic_adam')
-        _optimize_critic = self.critic_optimizer.minimize(self.critic_loss,
-                                                          var_list=self.critic.trainable_vars)
+        optimizer = MpiAdamOptimizer(comm=self.comm,
+                                     clip_norm=self.hps.clip_norm,
+                                     learning_rate=self.hps.critic_lr,
+                                     name='critic_adam')
+        optimize_ = optimizer.minimize(loss=loss, var_list=self.critic.trainable_vars)
 
-        # Create Theano-like ops
-        self.get_critic_losses = U.function(phs, self.critic_losses)
-        self.get_critic_grads = U.function(phs, self.critic_grads)
-        self.optimize_critic = U.function(phs, _optimize_critic)
+        # Create callable objects
+        get_losses = TheanoFunction(inputs=phs, outputs=list(losses.values()))
+        get_grads = TheanoFunction(inputs=phs, outputs=grads)
+        optimize = TheanoFunction(inputs=phs, outputs=optimize_)
 
-        if self.hps.prioritized_replay:  # `self.iws` already properly inserted
-            td_errors_ops = [self.td_errors_1] + ([self.td_errors_n]
-                                                  if self.hps.n_step_returns
-                                                  else [])
-            self.get_td_errors = U.function(phs, td_errors_ops)
+        if self.hps.prioritized_replay:
+            td_errors_ops = [td_errors_1] + ([td_errors_n]
+                                             if self.hps.n_step_returns
+                                             else [])
+            get_td_errors = TheanoFunction(inputs=phs, outputs=td_errors_ops)
 
         # Log statistics
-        self.log_module_info(self.critic)
+        log_module_info(logger, self.name, self.critic)
+
+        # Return the critic ops
+        out = {'names': list(losses.keys()),
+               'losses': get_losses,
+               'grads': get_grads,
+               'optimizer': optimizer,
+               'optimize': optimize}
+        if self.hps.prioritized_replay:
+            out.update({'td_errors': get_td_errors})
+
+        return out
 
     def setup_popart(self):
         """Play w/ the magnitude of the return @ the critic output
@@ -523,8 +585,9 @@ class SAMAgent(my.AbstractModule):
             self.popart_op += [w.assign(w * self.old_std / new_std)]
             self.popart_op += [b.assign((b * self.old_std + self.old_mean - new_mean) / new_std)]
 
-            # Create Theano-like operator
-            self.popart = U.function([self.old_mean, self.old_std], [self.popart_op])
+            # Create callable objects
+            self.popart = TheanoFunction(inputs=[self.old_mean, self.old_std],
+                                         outputs=[self.popart_op])
 
     def predict(self, obs, apply_noise, compute_q):
         """Predict an action, with or without perturbation,
@@ -532,19 +595,28 @@ class SAMAgent(my.AbstractModule):
         """
         if apply_noise and self.param_noise is not None:
             # Predict following a parameter-noise-perturbed actor
-            ac, q = self.p_act_q(obs[None]) if compute_q else (self.p_act(obs[None]), None)
+            if compute_q:
+                ac, q = self.p_act_q({self.obs0: obs[None]})
+            else:
+                ac, q = (self.p_act({self.obs0: obs[None]}), None)
         else:
             # Predict following the non-perturbed actor
-            ac, q = self.act_q(obs[None]) if compute_q else (self.act(obs[None]), None)
+            if compute_q:
+                ac, q = self.act_q({self.obs0: obs[None]})
+            else:
+                ac, q = (self.act({self.obs0: obs[None]}), None)
+
         # Collapse the returned action into one dimension
         ac = ac.flatten()
+
         if apply_noise and self.ac_noise is not None:
             # Apply additive action noise once the action has been predicted,
             # with a parameter-noise-perturbed agent or not.
             noise = self.ac_noise.generate()
             assert noise.shape == ac.shape
             ac += noise
-        return ac, np.asscalar(q.flatten())
+
+        return ac, np.asscalar(q.flatten()) if compute_q else (ac, None)
 
     def store_transition(self, ob0, ac, rew, ob1, done1):
         """Store a experiental transition in the replay buffer"""
@@ -565,64 +637,61 @@ class SAMAgent(my.AbstractModule):
                                                                gamma=self.hps.gamma)
         else:
             batch = self.replay_buffer.sample(batch_size=self.hps.batch_size)
-        # Unpack the sampled batch (manually to disambiguate ordering)
-        b_obs0 = batch['obs0']
-        b_acs = batch['acs']
-        b_obs1 = batch['obs1']
-        b_rews = batch['rews']
-        b_dones1 = batch['dones1'].astype(dtype='float32')
-        if self.hps.n_step_returns:
-            b_td_len = batch['td_len']
-        if self.hps.prioritized_replay:
-            b_idxs = batch['idxs']
-            b_iws = batch['iws']
 
         if isinstance(self.ac_space, spaces.Discrete):
             # Actions are stored as scalars in the replay buffer for storage reasons
             # but the critic processes one-hot versions of those scalars
-            b_acs = onehotify(b_acs, self.ac_space.n)
+            batch['acs'] = onehotify(batch['acs'], self.ac_space.n)
 
-        # Compute target Q values
-        b_vs = [b_obs1, b_rews, b_dones1]
         # Create vector containing the lengths of the 1-step lookaheads -> 1 for all
         onesies = np.ones(shape=(self.hps.batch_size, 1))
-        targ_q_1 = self.get_targ_q(*b_vs, onesies)
+
+        # Compute target Q values
+        targ_q_1 = self.get_targ_q({self.obs1: batch['obs1'],
+                                    self.rews: batch['rews'],
+                                    self.dones1: batch['dones1'].astype(dtype='float32'),
+                                    self.td_len: onesies})
+
         if self.hps.n_step_returns:
-            targ_q_n = self.get_targ_q(*b_vs, b_td_len)
+            targ_q_n = self.get_targ_q({self.obs1: batch['obs1'],
+                                        self.rews: batch['rews'],
+                                        self.dones1: batch['dones1'].astype(dtype='float32'),
+                                        self.td_len: batch['td_len']})
 
         if self.hps.rmsify_rets and self.hps.enable_popart:
             # Compute old return statistics
-            old_ret_mean, old_ret_std = self.old_ret_stats(b_rews)
+            old_ret_mean, old_ret_std = self.old_ret_stats({self.rews: batch['rews']})
             # The values are stored as `old_*`, an update is now performed
             # on the return stats, using the freshly computed target Q value
             self.ret_rms.update(targ_q_1.flatten(), self.comm)
             if self.hps.n_step_returns:
                 self.ret_rms.update(targ_q_n.flatten(), self.comm)
             # Perform popart critic output parameters rectifications
-            self.popart(np.array([old_ret_mean]), np.array([old_ret_std]))
+            self.popart({self.old_mean: np.array([old_ret_mean]),
+                         self.old_std: np.array([old_ret_std])})
 
         # Compute losses and gradients
-        b_vs = [b_obs0, b_acs]
+        actor_losses = self.actor_ops['losses']({self.obs0: batch['obs0']})
+        actor_grads = self.actor_ops['grads']({self.obs0: batch['obs0']})
+
+        feeds = {self.obs0: batch['obs0'],
+                 self.acs: batch['acs']}
         if self.hps.prioritized_replay:
-            b_vs.append(b_iws)
-        b_vs.append(targ_q_1)
+            feeds.update({self.iws: batch['iws']})
+        feeds.update({self.tc1s: targ_q_1})
         if self.hps.n_step_returns:
-            b_vs.append(targ_q_n)
-        actor_losses = self.get_actor_losses(b_obs0)
-        actor_grads = self.get_actor_grads(b_obs0)
-        critic_losses = self.get_critic_losses(*b_vs)
-        critic_grads = self.get_critic_grads(*b_vs)
+            feeds.update({self.tcns: targ_q_n})
+
+        critic_losses = self.critic_ops['losses'](feeds)
+        critic_grads = self.critic_ops['grads'](feeds)
 
         # Perform mpi gradient descent update
-        self.optimize_actor(b_obs0)
-        self.optimize_critic(*b_vs)
+        self.actor_ops['optimize']({self.obs0: batch['obs0']})
+        self.critic_ops['optimize'](feeds)
 
         if self.hps.prioritized_replay:
             # Update priorities
-            b_vs = [b_obs0, b_acs, b_iws, targ_q_1]
-            if self.hps.n_step_returns:
-                b_vs.append(targ_q_n)
-            td_errors = self.get_td_errors(*b_vs)
+            td_errors = self.critic_ops['td_errors'](feeds)
             if self.hps.n_step_returns:  # `td_errors` = [td_errors_1, td_errors_n]
                 # Sum `td_errors_1` and `td_errors_n` element-wise
                 td_errors = np.sum(td_errors, axis=0)
@@ -630,7 +699,7 @@ class SAMAgent(my.AbstractModule):
                 # Extract the only element of the list
                 td_errors = td_errors[0]
             new_priorities = np.abs(td_errors) + 1e-6  # epsilon from paper
-            self.replay_buffer.update_priorities(b_idxs, new_priorities)
+            self.replay_buffer.update_priorities(batch['idxs'], new_priorities)
 
         # Aggregate the elements to return
         losses_and_grads = {'actor_grads': actor_grads,
@@ -643,28 +712,26 @@ class SAMAgent(my.AbstractModule):
     def sync_from_root(self):
         """Initialize both actor and critic, as well as their target counterparts"""
         # Synchronize the optimizers across all mpi workers
-        self.actor_optimizer.sync_from_root(self.actor.trainable_vars)
-        self.critic_optimizer.sync_from_root(self.critic.trainable_vars)
-        # Initialize target networks as hard copies of the main networks
-        self.perform_targ_hard_updates()
+        self.actor_ops['optimizer'].sync_from_root(self.actor.trainable_vars)
+        self.critic_ops['optimizer'].sync_from_root(self.critic.trainable_vars)
+
+    def initialize_target_nets(self):
+        """Initialize target networks as hard copies of the main networks"""
+        self.perform_targ_hard_updates({})
 
     def update_target_net(self):
         """Update the target networks by slowly tracking their non-target counterparts"""
-        # Update target networks by slowly tracking the main networks
-        self.perform_targ_soft_updates()
+        self.perform_targ_soft_updates({})
 
     def adapt_param_noise(self, comm):
         """Adapt the parameter noise standard deviation"""
-        if self.param_noise is None:
-            # Do nothing and break out if no param noise is set up
-            return
         # Perturb separate copy of the policy to adjust the scale for the next 'real' perturbation
         batch = self.replay_buffer.sample(batch_size=self.hps.batch_size)
-        b_obs0 = batch['obs0']
         # Align the adaptive-parameter-noise-perturbed weights with the actor
-        self.apply_a_p_actor_updates(self.param_noise.cur_std)
+        self.apply_a_p_actor_updates({self.pn_std: self.param_noise.cur_std})
         # Compute distance between actor and adaptive-parameter-noise-perturbed actor predictions
-        dist = self.get_a_p_dist(b_obs0, self.param_noise.cur_std)
+        dist = self.get_a_p_dist({self.obs0: batch['obs0'],
+                                  self.pn_std: self.param_noise.cur_std})
         # Average the computed distance between the mpi workers
         self.pn_dist = mpi_mean_like(dist, comm)
         # Adapt the parameter noise
@@ -678,4 +745,4 @@ class SAMAgent(my.AbstractModule):
         # Reset parameter-noise-perturbed actor vars by redefining the pnp actor
         # w.r.t. the actor (by applying additive gaussian noise with current std)
         if self.param_noise is not None:
-            self.apply_p_actor_updates(self.param_noise.cur_std)
+            self.apply_p_actor_updates({self.pn_std: self.param_noise.cur_std})

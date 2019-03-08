@@ -3,7 +3,6 @@
         --task=sam \
         --benchmark=mujoco \
         --cluster=cscs \
-        --device=gpu \
         --demos_dir=/code/sam-tf/DEMOS \
         --no-mpi \
         --num_workers=4 \
@@ -11,10 +10,8 @@
         --time=12:00:00 \
         --num_seeds=5 \
         --no-call \
-        --no-rand
-
-partitions for cscs: debug, normal
-partitions for baobab: debug, shared, shared-gpu, kalousis-gpu
+        --no-rand \
+        --num_demos="4, 16"
 """
 
 import argparse
@@ -22,20 +19,19 @@ import os.path as osp
 import numpy as np
 from subprocess import call
 from copy import copy
+import yaml
 
-from imitation.common.misc_util import flatten_lists, zipsame, boolean_flag
-from imitation.common.experiment_initializer import rand_id
+from imitation.helpers.misc_util import flatten_lists, zipsame, boolean_flag
+from imitation.helpers.experiment_initializer import rand_id
 
 
 parser = argparse.ArgumentParser(description="SAM Job Orchestrator + HP Search")
 parser.add_argument('--task', type=str, choices=['ppo', 'gail', 'sam'], default='ppo',
                     help="whether to train an expert with PPO or an imitator with GAIL or SAM")
-parser.add_argument('--benchmark', type=str, choices=['atari', 'mujoco'], default='mujoco',
+parser.add_argument('--benchmark', type=str, choices=['ale', 'mujoco'], default='mujoco',
                     help="benchmark on which to run experiments")
 parser.add_argument('--cluster', type=str, choices=['baobab', 'cscs', 'gengar'], default='gengar',
                     help="cluster on which the experiments will be launched")
-parser.add_argument('--device', type=str, choices=['cpu', 'gpu'], default='gpu',
-                    help="type de processing unit to use")
 parser.add_argument('--num_rand_trials', type=int, default=50,
                     help="number of different models to run for the HP search (default: 50)")
 boolean_flag(parser, 'mpi', default=False, help="whether to use mpi")
@@ -47,27 +43,30 @@ parser.add_argument('--num_seeds', type=int, default=5,
                     help="amount of seeds across which jobs are replicated ('range(num_seeds)'')")
 boolean_flag(parser, 'call', default=False, help="whether to launch the jobs once created")
 boolean_flag(parser, 'rand', default=False, help="whether to perform hyperparameter search")
+parser.add_argument('--num_demos', default="4, 16", help="comma-separated list of num of demos")
 args = parser.parse_args()
 
-NUM_DEMOS_SET = [4, 16]
-MUJOCO_ENVS_SET = ['InvertedPendulum-v2',
-                   'InvertedDoublePendulum-v2',
-                   'Reacher-v2',
-                   'Hopper-v2',
-                   'HalfCheetah-v2',
-                   'Walker2d-v2',
-                   'Ant-v2']
-ATARI_ENVS_SET = ['BreakoutNoFrameskip-v4']
-MUJOCO_EXPERT_DEMOS = ['InvertedPendulum-v2_s0_mode_d32.npz',
-                       'InvertedDoublePendulum-v2_s0_mode_d32.npz',
-                       'Reacher-v2_s0_mode_d32.npz',
-                       'Hopper-v2_s0_mode_d32.npz',
-                       'HalfCheetah-v2_s0_mode_d32.npz',
-                       'Walker2d-v2_s0_mode_d32.npz',
-                       'Ant-v2_s0_mode_d32.npz']
-ATARI_EXPERT_DEMOS = ['BreakoutNoFrameskip-v4_s0_mode_d32.npz']
-# Note 1: the orders must correspond, otherwise `zipsame` will return an error
-# Note 2: `zipsame` returns a single-use iterator, that's why we don't define the pairs here
+# Load the content of the config file
+envs = yaml.load(open("admissible_envs.yml"))['environments']
+
+MUJOCO_ENVS_SET = list(envs['mujoco'].keys())
+ALE_ENVS_SET = list(envs['ale'].keys())
+MUJOCO_EXPERT_DEMOS = list(envs['mujoco'].values())
+ALE_EXPERT_DEMOS = list(envs['ale'].values())
+
+
+def zipsame_prune(l1, l2):
+    out = []
+    for a, b in zipsame(l1, l2):
+        if b is None:
+            continue
+        out.append((a, b))
+    return out
+
+
+def parse_num_demos(num_demos):
+    """Parse the `num_demos` hyperparameter"""
+    return [n.strip() for n in num_demos.split(',')]
 
 
 def fmt_path(args, meta, dir_):
@@ -121,22 +120,21 @@ def rand_tuple_from_list(list_):
     return list_[np.random.randint(low=0, high=len(list_))]
 
 
-def get_rand_hps(args, meta):
+def get_rand_hps(args, meta, num_seeds):
     """Return a list of maps of hyperparameters selected by random search
     Example of hyperparameter dictionary:
         {'hid_widths': rand_tuple_from_list([(64, 64)]),  # list of tuples
          'hid_nonlin': np.random.choice(['relu', 'leaky_relu']),
          'hid_w_init': np.random.choice(['he_normal', 'he_uniform']),
-         'tau': np.random.choice([0.001, 0.01]),
+         'polyak': np.random.choice([0.001, 0.01]),
          'with_layernorm': 1,
          'ent_reg_scale': 0.}
     """
     # Atari
-    if args.benchmark == 'atari':
+    if args.benchmark == 'ale':
         # Expert
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 1,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -144,7 +142,7 @@ def get_rand_hps(args, meta):
                      'algo': 'ppo',
                      'rmsify_obs': 0,
                      'save_frequency': 20,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -163,19 +161,18 @@ def get_rand_hps(args, meta):
                      'gamma': 0.99,
                      'gae_lambda': 0.98,
                      'schedule': 'constant'}
-            return [dup_hps_for_env(hpmap, env)
-                    for env in ATARI_ENVS_SET]
+            hpmaps = [dup_hps_for_env(hpmap, env)
+                      for env in ALE_ENVS_SET]
         # Imitator
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 1024,
                      'batch_size': 128,
                      'sample_or_mode': 1,
@@ -203,20 +200,20 @@ def get_rand_hps(args, meta):
                      'd_lr': 3e-4,
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
-            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                    for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
+                      for env, demos in zipsame_prune(ALE_ENVS_SET, ALE_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e7),
+                     'num_iters': int(1e6),
                      'training_steps_per_iter': np.random.choice([25, 50]),
                      'eval_steps_per_iter': 10,
+                     'eval_frequency': 100,
                      'render': 0,
                      'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
                      'batch_size': np.random.choice([32, 64, 128, 256]),
@@ -233,7 +230,7 @@ def get_rand_hps(args, meta):
                      'd_hid_widths': (128,),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': 0.01,
+                     'polyak': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -263,14 +260,13 @@ def get_rand_hps(args, meta):
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
                      'n': np.random.choice([36, 72, 96])}
-            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                    for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
+                      for env, demos in zipsame_prune(ALE_ENVS_SET, ALE_EXPERT_DEMOS)]
     # MuJoCo
     elif args.benchmark == 'mujoco':
         # Expert
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 0,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -278,7 +274,7 @@ def get_rand_hps(args, meta):
                      'algo': 'ppo',
                      'rmsify_obs': 1,
                      'save_frequency': 20,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -294,19 +290,18 @@ def get_rand_hps(args, meta):
                      'gamma': 0.99,
                      'gae_lambda': 0.98,
                      'schedule': 'constant'}
-            return [dup_hps_for_env(hpmap, env)
-                    for env in MUJOCO_ENVS_SET]
+            hpmaps = [dup_hps_for_env(hpmap, env)
+                      for env in MUJOCO_ENVS_SET]
         # Imitator
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 0,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 1024,
                      'batch_size': 128,
                      'sample_or_mode': 1,
@@ -328,24 +323,23 @@ def get_rand_hps(args, meta):
                      'd_lr': 3e-4,
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
-            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                    for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
+                      for env, demos in zipsame_prune(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e7),
+                     'num_iters': int(1e6),
                      'training_steps_per_iter': np.random.choice([25, 50]),
                      'eval_steps_per_iter': 10,
+                     'eval_frequency': 100,
                      'render': 0,
                      'timesteps_per_batch': np.random.choice([2, 4, 8, 16, 32]),
                      'batch_size': np.random.choice([32, 64, 128, 256]),
-                     'num_demos': 16,
                      'g_steps': 3,
                      'd_steps': 1,
                      'non_satur_grad': 0,
@@ -353,7 +347,7 @@ def get_rand_hps(args, meta):
                      'd_hid_widths': (64, 64),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': 0.01,
+                     'polyak': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -384,10 +378,23 @@ def get_rand_hps(args, meta):
                      'wd_scale': np.random.choice([0.01, 0.001]),
                      'n_step_returns': 1,
                      'n': np.random.choice([36, 72, 96])}
-            return [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                    for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
+            hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
+                      for env, demos in zipsame_prune(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
-        raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
+        raise RuntimeError("unknown benchmark")
+
+    # Duplicate every hyperparameter map of the list to span the range of seeds
+    output = [dup_hps_for_seed(hpmap, seed)
+              for seed in range(num_seeds)
+              for hpmap in hpmaps]
+
+    if args.task in ['gail', 'sam']:
+        # Duplicate every hyperparameter map of the list to span the range of num of demos
+        output = [dup_hps_for_num_demos(hpmap, num_demos)
+                  for num_demos in parse_num_demos(args.num_demos)
+                  for hpmap in output]
+
+    return output
 
 
 def get_spectrum_hps(args, meta, num_seeds):
@@ -397,16 +404,15 @@ def get_spectrum_hps(args, meta, num_seeds):
         {'hid_widths': (64, 64),
          'hid_nonlin': 'relu',
          'hid_w_init': 'he_normal',
-         'tau': 0.001,
+         'polyak': 0.001,
          'with_layernorm': 1,
          'ent_reg_scale': 0.}
     """
     # Atari
-    if args.benchmark == 'atari':
+    if args.benchmark == 'ale':
         # Expert
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 1,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -414,7 +420,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'algo': 'ppo',
                      'rmsify_obs': 0,
                      'save_frequency': 20,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -433,7 +439,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'gamma': 0.99,
                      'gae_lambda': 0.98,
                      'schedule': 'constant'}
-            hpmaps = [dup_hps_for_env(hpmap, env) for env in ATARI_ENVS_SET]
+            hpmaps = [dup_hps_for_env(hpmap, env) for env in ALE_ENVS_SET]
         # Imitator
         elif args.task == 'gail':
             hpmap = {'from_raw_pixels': 1,
@@ -443,7 +449,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 1024,
                      'batch_size': 128,
                      'sample_or_mode': 1,
@@ -472,7 +478,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
             hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                      for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
+                      for env, demos in zipsame_prune(ALE_ENVS_SET, ALE_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 1,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
@@ -481,9 +487,10 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 0,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e7),
+                     'num_iters': int(1e6),
                      'training_steps_per_iter': 20,
                      'eval_steps_per_iter': 10,
+                     'eval_frequency': 100,
                      'render': 0,
                      'timesteps_per_batch': 4,
                      'batch_size': 32,
@@ -500,7 +507,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'd_hid_widths': (128,),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': 0.01,
+                     'polyak': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -531,13 +538,12 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'n_step_returns': 1,
                      'n': 96}
             hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                      for env, demos in zipsame(ATARI_ENVS_SET, ATARI_EXPERT_DEMOS)]
+                      for env, demos in zipsame_prune(ALE_ENVS_SET, ALE_EXPERT_DEMOS)]
     # MuJoCo
     elif args.benchmark == 'mujoco':
         # Expert
         if args.task == 'ppo':
             hpmap = {'from_raw_pixels': 0,
-                     'seed': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'expert_checkpoints'),
                      'summary_dir': fmt_path(args, meta, 'summaries'),
                      'log_dir': fmt_path(args, meta, 'logs'),
@@ -545,7 +551,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'algo': 'ppo',
                      'rmsify_obs': 1,
                      'save_frequency': 20,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 2048,
                      'batch_size': 64,
                      'optim_epochs_per_iter': 10,
@@ -571,7 +577,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'task': 'imitate_via_gail',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e9),
+                     'num_iters': int(1e6),
                      'timesteps_per_batch': 1024,
                      'batch_size': 128,
                      'sample_or_mode': 1,
@@ -594,7 +600,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'gamma': 0.995,
                      'gae_lambda': 0.99}
             hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                      for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
+                      for env, demos in zipsame_prune(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
         elif args.task == 'sam':
             hpmap = {'from_raw_pixels': 0,
                      'checkpoint_dir': fmt_path(args, meta, 'imitation_checkpoints'),
@@ -603,9 +609,10 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'task': 'imitate_via_sam',
                      'rmsify_obs': 1,
                      'save_frequency': 100,
-                     'num_timesteps': int(1e7),
+                     'num_iters': int(1e6),
                      'training_steps_per_iter': 20,
                      'eval_steps_per_iter': 10,
+                     'eval_frequency': 100,
                      'render': 0,
                      'timesteps_per_batch': 4,
                      'batch_size': 32,
@@ -616,7 +623,7 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'd_hid_widths': (64, 64),
                      'hid_nonlin': 'leaky_relu',
                      'hid_w_init': 'he_normal',
-                     'tau': 0.01,
+                     'polyak': 0.01,
                      'with_layernorm': 1,
                      'ac_branch_in': 1,
                      'd_ent_reg_scale': 0.,
@@ -647,18 +654,19 @@ def get_spectrum_hps(args, meta, num_seeds):
                      'n_step_returns': 1,
                      'n': 96}
             hpmaps = [dup_hps_for_env_w_demos(args, hpmap, env, demos)
-                      for env, demos in zipsame(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
+                      for env, demos in zipsame_prune(MUJOCO_ENVS_SET, MUJOCO_EXPERT_DEMOS)]
     else:
-        raise RuntimeError("unknown benchmark, check what's available in 'spawn_jobs_cscs.py'")
+        raise RuntimeError("unknown benchmark")
+
+    # Duplicate every hyperparameter map of the list to span the range of seeds
+    output = [dup_hps_for_seed(hpmap, seed)
+              for seed in range(num_seeds)
+              for hpmap in hpmaps]
 
     if args.task in ['gail', 'sam']:
-        # Duplicate every hyperparameter map of the list to span the range of seeds
-        output = [dup_hps_for_seed(hpmap, seed)
-                  for seed in range(num_seeds)
-                  for hpmap in hpmaps]
         # Duplicate every hyperparameter map of the list to span the range of num of demos
         output = [dup_hps_for_num_demos(hpmap, num_demos)
-                  for num_demos in NUM_DEMOS_SET
+                  for num_demos in parse_num_demos(args.num_demos)
                   for hpmap in output]
     return output
 
@@ -710,16 +718,9 @@ def format_job_str(args, job_map, run_str):
                             '#SBATCH --cpus-per-task=1\n'
                             '#SBATCH --time={}\n'
                             '#SBATCH --mem=32000\n')
-        if args.device == 'gpu':
-            contraint = "COMPUTE_CAPABILITY_6_0|COMPUTE_CAPABILITY_6_1"
-            bash_script_str += ('#SBATCH --gres=gpu:1\n'
-                                '#SBATCH --constraint="{}"\n'.format(contraint))
         bash_script_str += ('\n')
         # Load modules
-        bash_script_str += ('module load GCC/6.3.0-2.27\n')
-        if args.device == 'gpu':
-            bash_script_str += ('module load CUDA\n')
-        bash_script_str += ('\n')
+        bash_script_str += ('module load GCC/6.3.0-2.27\n\n')
         # Launch command
         if args.mpi:
             bash_script_str += ('mpirun ')
@@ -813,7 +814,7 @@ def run(args):
     # Get hyperparameter configurations
     if args.rand:
         # Get a number of random hyperparameter configurations
-        hpmaps = [get_rand_hps(args, meta) for _ in range(args.num_rand_trials)]
+        hpmaps = [get_rand_hps(args, meta, args.num_seeds) for _ in range(args.num_rand_trials)]
         # Flatten into a 1-dim list
         hpmaps = flatten_lists(hpmaps)
     else:

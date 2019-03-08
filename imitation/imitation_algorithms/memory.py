@@ -3,10 +3,10 @@ from math import floor
 
 import numpy as np
 
-from imitation.common import math_util as M
-from imitation.common import logger
-from imitation.common.misc_util import zipsame
-from imitation.common.segment_tree import SumSegmentTree, MinSegmentTree
+from imitation.helpers.math_util import discount
+from imitation.helpers import logger
+from imitation.helpers.misc_util import zipsame
+from imitation.helpers.segment_tree import SumSegmentTree, MinSegmentTree
 
 
 # Global variable for debugging purposes
@@ -137,7 +137,7 @@ class RB(object):
             # Trim down the lookahead transitions
             lookahead_rews = lookahead_transitions['rews'][:td_len]
             # Compute discounted cumulative reward
-            lookahead_discounted_sum_n_rews = M.discount(lookahead_rews, gamma)[0]
+            lookahead_discounted_sum_n_rews = discount(lookahead_rews, gamma)[0]
 
             # Populate the batch for this n-step TD backup
             lookahead_batch['obs0'].append(lookahead_transitions['obs0'][0])

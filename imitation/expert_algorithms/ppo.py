@@ -1,20 +1,19 @@
 import time
 import os.path as osp
-from collections import deque
+from collections import deque, OrderedDict
 
 import tensorflow as tf
 import numpy as np
 
-from imitation.common import tf_util as U
-from imitation.common import logger
-from imitation.common.feeder import Feeder
-from imitation.common.misc_util import zipsame, flatten_lists, prettify_time
-from imitation.common.math_util import explained_variance
-from imitation.common.math_util import augment_segment_gae_stats
-from imitation.common.console_util import columnize, timed_cm_wrapper, pretty_iter, pretty_elapsed
-from imitation.common.mpi_adam import MpiAdamOptimizer
-from imitation.common.summary_util import CustomSummary
-from imitation.common.mpi_moments import mpi_mean_like, mpi_mean_reduce
+from imitation.helpers.tf_util import (initialize, get_placeholder_cached,
+                                       save_state, TheanoFunction)
+from imitation.helpers import logger
+from imitation.helpers.feeder import Feeder
+from imitation.helpers.misc_util import zipsame, flatten_lists, prettify_time
+from imitation.helpers.math_util import explained_variance, augment_segment_gae_stats
+from imitation.helpers.console_util import columnize, timed_cm_wrapper, pretty_iter, pretty_elapsed
+from imitation.helpers.mpi_adam import MpiAdamOptimizer
+from imitation.helpers.mpi_moments import mpi_mean_like, mpi_mean_reduce
 from imitation.expert_algorithms.xpo_util import traj_segment_generator
 
 
@@ -35,9 +34,7 @@ def learn(comm,
           clipping_eps,
           gae_lambda,
           schedule,
-          max_timesteps=0,
-          max_episodes=0,
-          max_iters=0):
+          max_iters):
 
     rank = comm.Get_rank()
 
@@ -46,12 +43,12 @@ def learn(comm,
     old_pi = xpo_agent_wrapper('old_pi')
 
     # Create and retrieve already-existing placeholders
-    ob = U.get_placeholder_cached(name='ob')
+    ob = get_placeholder_cached(name='ob')
     ac = pi.pd_type.sample_placeholder([None])
-    adv = U.get_placeholder(name='adv', dtype=tf.float32, shape=[None])  # advantage
-    ret = U.get_placeholder(name='ret', dtype=tf.float32, shape=[None])  # return
+    adv = tf.placeholder(name='adv', dtype=tf.float32, shape=[None])
+    ret = tf.placeholder(name='ret', dtype=tf.float32, shape=[None])
     # Adaptive learning rate multiplier, updated with schedule
-    lr_mult = U.get_placeholder(name='lr_mult', dtype=tf.float32, shape=[])
+    lr_mult = tf.placeholder(name='lr_mult', dtype=tf.float32, shape=[])
 
     # Build graphs
     kl_mean = tf.reduce_mean(old_pi.pd_pred.kl(pi.pd_pred))
@@ -69,11 +66,17 @@ def learn(comm,
     # PPO's pessimistic surrogate (L^CLIP in paper)
     surr_loss = -tf.reduce_mean(tf.minimum(surr_gain, surr_gain_w_clipping))
     # Assemble losses (including the value function loss)
-    total_loss = surr_loss + ent_pen + vf_err
+    loss = surr_loss + ent_pen + vf_err
 
-    losses = [kl_mean, ent_mean, ent_pen, surr_loss, vf_err]
-    loss_names = ["kl_mean", "ent_mean", "ent_pen", "surr_loss", "vf_err"]
-    loss_names = ["pol_" + e for e in loss_names]
+    losses = OrderedDict()
+
+    # Add losses
+    losses.update({'pol_kl_mean': kl_mean,
+                   'pol_ent_mean': ent_mean,
+                   'pol_ent_pen': ent_pen,
+                   'pol_surr_loss': surr_loss,
+                   'pol_vf_err': vf_err,
+                   'pol_total_loss': loss})
 
     # Make the current `pi` become the next `old_pi`
     zipped = zipsame(old_pi.vars, pi.vars)
@@ -86,31 +89,32 @@ def learn(comm,
     assert len(updates_op) == len(pi.vars)
 
     # Create mpi adam optimizer
-    optimizer = MpiAdamOptimizer(comm, clip_norm=5.0, learning_rate=lr * lr_mult, name='adam')
-    _optimize = optimizer.minimize(total_loss, var_list=pi.trainable_vars)
+    optimizer = MpiAdamOptimizer(comm=comm,
+                                 clip_norm=5.0,
+                                 learning_rate=lr * lr_mult,
+                                 name='adam')
+    optimize = optimizer.minimize(loss=loss, var_list=pi.trainable_vars)
 
-    # Create Theano-like ops
-    assign_old_eq_new = U.function([], [], updates=updates_op)
-    compute_losses = U.function([ob, ac, adv, ret, lr_mult], losses)
-    optimize = U.function([ob, ac, adv, ret, lr_mult], _optimize)
+    # Create callable objects
+    assign_old_eq_new = TheanoFunction(inputs=[], outputs=updates_op)
+    compute_losses = TheanoFunction(inputs=[ob, ac, adv, ret, lr_mult],
+                                    outputs=list(losses.values()))
+    optimize = TheanoFunction(inputs=[ob, ac, adv, ret, lr_mult],
+                              outputs=optimize)
 
     # Initialise variables
-    U.initialize()
+    initialize()
+
     # Sync params of all processes with the params of the root process
     optimizer.sync_from_root(pi.trainable_vars)
 
     # Create context manager that records the time taken by encapsulated ops
-    timed = timed_cm_wrapper(comm=comm, logger=logger,
-                             color_message='magenta', color_elapsed_time='cyan')
+    timed = timed_cm_wrapper(comm, logger)
 
     if rank == 0:
         # Create summary writer
-        writer = U.file_writer(summary_dir)
-        ep_stats_names = ["ep_len", "ep_env_ret"]
-        _names = ep_stats_names + loss_names
-        _summary = CustomSummary(scalar_keys=_names, family="ppo")
+        summary_writer = tf.summary.FileWriterCache.get(summary_dir)
 
-    # Create segment generator
     seg_gen = traj_segment_generator(env, pi, timesteps_per_batch, sample_or_mode)
 
     eps_so_far = 0
@@ -122,18 +126,12 @@ def learn(comm,
     maxlen = 100
     len_buffer = deque(maxlen=maxlen)
     env_ret_buffer = deque(maxlen=maxlen)
+    pol_losses_buffer = deque(maxlen=maxlen)
 
-    # Only one of those three parameters can be set by the user (all three are zero by default)
-    assert sum([max_iters > 0, max_timesteps > 0, max_episodes > 0]) == 1
+    while iters_so_far <= max_iters:
 
-    while True:
-
-        if max_timesteps and timesteps_so_far >= max_timesteps:
-            break
-        elif max_episodes and eps_so_far >= max_episodes:
-            break
-        elif max_iters and iters_so_far >= max_iters:
-            break
+        pretty_iter(logger, iters_so_far)
+        pretty_elapsed(logger, tstart)
 
         # Verify that the processes are still in sync
         if iters_so_far > 0 and iters_so_far % 10 == 0:
@@ -144,61 +142,67 @@ def learn(comm,
         if schedule == 'constant':
             curr_lr_mult = 1.0
         elif schedule == 'linear':
-            curr_lr_mult = max(1.0 - float(timesteps_so_far) / max_timesteps, 0)
+            curr_lr_mult = max(1.0 - float(iters_so_far * timesteps_per_batch) /
+                               max_iters * timesteps_per_batch, 0)
         else:
             raise NotImplementedError
 
         # Save the model
         if rank == 0 and iters_so_far % save_frequency == 0 and ckpt_dir is not None:
             model_path = osp.join(ckpt_dir, experiment_name)
-            U.save_state(model_path, iters_so_far=iters_so_far)
+            save_state(model_path, iters_so_far=iters_so_far)
             logger.info("saving model")
             logger.info("  @: {}".format(model_path))
-
-        pretty_iter(logger, iters_so_far)
-        pretty_elapsed(logger, tstart)
 
         with timed("sampling mini-batch"):
             seg = seg_gen.__next__()
 
         augment_segment_gae_stats(seg, gamma, gae_lambda, rew_key="env_rews")
 
-        # Extract rollout data
-        obs = seg['obs']
-        acs = seg['acs']
-        advs = seg['advs']
         # Standardize advantage function estimate
-        advs = (advs - advs.mean()) / (advs.std() + 1e-8)
-        vs = seg['vs']
-        td_lam_rets = seg['td_lam_rets']
+        seg['advs'] = (seg['advs'] - seg['advs'].mean()) / (seg['advs'].std() + 1e-8)
 
         # Update running mean and std
         if hasattr(pi, 'obs_rms'):
             with timed("normalizing obs via rms"):
-                pi.obs_rms.update(obs, comm)
+                pi.obs_rms.update(seg['obs'], comm)
 
-        assign_old_eq_new()
+        assign_old_eq_new({})
 
         # Create Feeder object to iterate over (ob, ac, adv, td_lam_ret) tuples
-        data_map = dict(obs=obs, acs=acs, advs=advs, td_lam_rets=td_lam_rets)
+        data_map = {'obs': seg['obs'],
+                    'acs': seg['acs'],
+                    'advs': seg['advs'],
+                    'td_lam_rets': seg['td_lam_rets']}
         feeder = Feeder(data_map=data_map, enable_shuffle=True)
+
         # Update policy and state-value function
         with timed("updating policy and value function"):
-            losses = []
             for _ in range(optim_epochs_per_iter):
                 for minibatch in feeder.get_feed(batch_size=batch_size):
-                    args = (minibatch['obs'], minibatch['acs'],
-                            minibatch['advs'], minibatch['td_lam_rets'])
-                    pi_losses = compute_losses(*args, curr_lr_mult)
-                    optimize(*args, curr_lr_mult)
-                    losses.append(pi_losses)
+
+                    feeds = {ob: minibatch['obs'],
+                             ac: minibatch['acs'],
+                             adv: minibatch['advs'],
+                             ret: minibatch['td_lam_rets'],
+                             lr_mult: curr_lr_mult}
+
+                    # Compute losses
+                    pol_losses = compute_losses(feeds)
+
+                    # Update the policy and value function
+                    optimize(feeds)
+
+                    # Store the losses
+                    pol_losses_buffer.append(pol_losses)
+
         # Log policy update statistics
         logger.info("logging training losses (log)")
-        pi_losses_np_mean = np.mean(losses, axis=0)
-        pi_losses_mpi_mean = mpi_mean_reduce(losses, comm, axis=0)
-        zipped_losses = zipsame(loss_names, pi_losses_np_mean, pi_losses_mpi_mean)
+        pol_losses_np_mean = np.mean(pol_losses_buffer, axis=0)
+        pol_losses_mpi_mean = mpi_mean_reduce(pol_losses_buffer, comm, axis=0)
+        zipped_pol_losses = zipsame(list(losses.keys()), pol_losses_np_mean, pol_losses_mpi_mean)
         logger.info(columnize(names=['name', 'local', 'global'],
-                              tuples=zipped_losses,
+                              tuples=zipped_pol_losses,
                               widths=[20, 16, 16]))
 
         # Log statistics
@@ -228,17 +232,24 @@ def learn(comm,
         logger.record_tabular('eps_so_far_mpi_mean', eps_so_far_mpi_mean)
         logger.record_tabular('timesteps_so_far_mpi_mean', timesteps_so_far_mpi_mean)
         logger.record_tabular('elapsed time', prettify_time(time.time() - tstart))  # no mpi mean
-        logger.record_tabular('ev_td_lam_before', explained_variance(vs, td_lam_rets))
+        logger.record_tabular('ev_td_lam_before', explained_variance(seg['vs'],
+                                                                     seg['td_lam_rets']))
         iters_so_far += 1
 
         if rank == 0:
             logger.dump_tabular()
 
-        # Prepare losses to be dumped in summaries
-        # This block must be visible by all workers
-        ep_stats_summary = [ep_len_mpi_mean, ep_env_ret_mpi_mean]
-        agent_loss_summary = [*pi_losses_mpi_mean]
-        trpo_stats_summary = ep_stats_summary + agent_loss_summary
-
         if rank == 0:
-            _summary.add_all_summaries(writer, trpo_stats_summary, iters_so_far)
+            # Add summaries
+            summary = tf.summary.Summary()
+            tab = 'ppo'
+            # Episode stats
+            summary.value.add(tag="{}/{}".format(tab, 'mean_ep_len'),
+                              simple_value=ep_len_mpi_mean)
+            summary.value.add(tag="{}/{}".format(tab, 'mean_ep_env_ret'),
+                              simple_value=ep_env_ret_mpi_mean)
+            # Losses
+            for name, loss in zipsame(list(losses.keys()), pol_losses_mpi_mean):
+                summary.value.add(tag="{}/{}".format(tab, name), simple_value=loss)
+
+            summary_writer.add_summary(summary, iters_so_far)

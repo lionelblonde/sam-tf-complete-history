@@ -15,9 +15,10 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --expert_path=$3 \
     --rmsify_obs \
     --save_frequency=100 \
-    --num_timesteps=10000000 \
+    --num_iters=1000000 \
     --training_steps_per_iter=20 \
     --eval_steps_per_iter=20 \
+    --eval_frequency=100 \
     --no-render \
     --timesteps_per_batch=4 \
     --batch_size=32 \
@@ -29,7 +30,7 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --d_hid_widths 64 64 \
     --hid_nonlin="leaky_relu" \
     --hid_w_init="he_normal" \
-    --tau=0.01 \
+    --polyak=0.01 \
     --with_layernorm \
     --ac_branch_in=1 \
     --d_ent_reg_scale=0. \
@@ -47,13 +48,15 @@ mpirun -np $1 --allow-run-as-root python -m imitation.imitation_algorithms.run_s
     --param_noise_adaption_frequency=40 \
     --gamma=0.99 \
     --mem_size=100000 \
-    --no-prioritized_replay \
+    --prioritized_replay \
     --alpha=0.3 \
     --beta=1. \
     --no-ranked \
     --reset_with_demos \
     --no-add_demos_to_mem \
     --no-unreal \
+    --q_actor_loss_scale=1. \
+    --d_actor_loss_scale=0. \
     --td_loss_1_scale=1. \
     --td_loss_n_scale=1. \
     --wd_scale=1e-3 \
